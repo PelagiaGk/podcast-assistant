@@ -5,3 +5,4 @@ pydub
 numpy
 torch
 transformers
+spaces
