@@ -5,10 +5,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  sync-to-hub:
+  sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -17,8 +17,12 @@ jobs:
       - name: Install Git LFS
         run: git lfs install
 
-      - name: Push to Hub
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          git push --force https://Pelagia-Gk:$HF_TOKEN@huggingface.co/spaces/Pelagia-Gk/podcast-assistant main
+      - name: Sync to Hub
+        uses: huggingface/hub-sync@v1.0
+        with:
+          github_repo_id: ${{ github.repository }}
+          huggingface_repo_id: Pelagia-Gk/podcast-assistant
+          repo_type: space
+          space_sdk: gradio
+          hf_token: ${{ secrets.HF_TOKEN }}
+
