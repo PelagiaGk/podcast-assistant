@@ -18,7 +18,7 @@ jobs:
         run: git lfs pull
 
       - name: Sync to Hub
-        uses: huggingface/hub-sync@v1.0
+        uses: huggingface/hub-sync@v0.1.0
         with:
           github_repo_id: ${{ github.repository }}
           huggingface_repo_id: Pelagia-Gk/podcast-assistant
