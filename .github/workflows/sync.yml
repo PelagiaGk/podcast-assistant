@@ -1,4 +1,4 @@
-name: Sync to HuggingFace Hub
+name: Sync to Hugging Face Hub
 on:
   push:
     branches: [main]
@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: write
-  actions: read
 
 jobs:
   sync:

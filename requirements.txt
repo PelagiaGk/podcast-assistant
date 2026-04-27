@@ -1,0 +1,10 @@
+gradio>=5.0.0
+librosa
+numpy
+# For high-end highlight detection
+git+https://github.com/line/lighthouse
+# For legal compliance
+c2pa-python
+# Standard ML stack
+torch
+torchaudio

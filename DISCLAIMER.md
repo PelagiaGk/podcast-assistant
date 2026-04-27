@@ -1,0 +1,1 @@
+!! The 'Copyright Check' function is only a tool and NOT a legal guarantee !!
