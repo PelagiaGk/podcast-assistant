@@ -1,0 +1,24 @@
+name: Sync to HuggingFace Hub
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync-to-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true 
+
+      - name: Install Git LFS
+        run: git lfs install
+
+      - name: Push to Hub
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git push --force https://Pelagia-Gk:$HF_TOKEN@huggingface.co/spaces/Pelagia-Gk/podcast-assistant main
