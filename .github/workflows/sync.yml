@@ -14,8 +14,8 @@ jobs:
           fetch-depth: 0
           lfs: true 
 
-      - name: Install Git LFS
-        run: git lfs install
+      - name: Checkout LFS objects
+        run: git lfs pull
 
       - name: Sync to Hub
         uses: huggingface/hub-sync@v1.0
@@ -23,6 +23,4 @@ jobs:
           github_repo_id: ${{ github.repository }}
           huggingface_repo_id: Pelagia-Gk/podcast-assistant
           repo_type: space
-          space_sdk: gradio
           hf_token: ${{ secrets.HF_TOKEN }}
-
