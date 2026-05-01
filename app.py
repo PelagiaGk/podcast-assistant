@@ -14,7 +14,7 @@ from pydub.effects import normalize
 from transformers import pipeline
 from pyannote.audio import Pipeline as DiarizationPipeline
 from sentence_transformers import SentenceTransformer, util
-
+#Model Access: Ensure you have accepted the user conditions for pyannote/speaker-diarization-3.1 and pyannote/segmentation-3.0 on Hugging Face.
 # --- Configuration & Logging ---
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
