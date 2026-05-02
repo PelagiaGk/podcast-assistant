@@ -14,18 +14,19 @@ from pydub.effects import normalize
 from transformers import pipeline
 from pyannote.audio import Pipeline as DiarizationPipeline
 from sentence_transformers import SentenceTransformer, util
-#Model Access: Ensure you have accepted the user conditions for pyannote/speaker-diarization-3.1 and pyannote/segmentation-3.0 on Hugging Face.
+
 # --- Configuration & Logging ---
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PodcastAI-Public")
 
 class Config:
+    # Pulls from GitHub Codespaces Secrets or .env file
     HF_TOKEN = os.getenv("HF_TOKEN")
     DEVICE = "cpu"  
     COMPUTE_TYPE = "int8" # Saves 50% RAM on CPU
     
-    # Model Selection (Balanced for 16GB RAM)
+    # Model Selection
     WHISPER_MODEL = "distil-large-v3" 
     CLASSIFIER_MODEL = "valhalla/distilbart-mnli-12-1" 
     EMBEDDER_MODEL = "all-MiniLM-L6-v2"
@@ -43,6 +44,14 @@ class Config:
         "casual small talk": -5.0
     }
     ANCHOR_THEMES = list(WEIGHTS.keys())
+
+    @classmethod
+    def validate_env(cls):
+        """Checks for required secrets before running."""
+        if not cls.HF_TOKEN:
+            raise EnvironmentError(
+                "HF_TOKEN is missing. Add it to GitHub Codespaces Secrets and restart your instance."
+            )
 
 # --- JavaScript for Browser Warning ---
 warning_js = """
@@ -70,7 +79,6 @@ def cleanup_session(session_path):
         except Exception as e:
             logger.error(f"Error deleting session: {e}")
     
-    # Clear Gradio's specific temp storage
     gradio_tmp = os.path.join(tempfile.gettempdir(), "gradio")
     if os.path.exists(gradio_tmp):
         shutil.rmtree(gradio_tmp, ignore_errors=True)
@@ -93,7 +101,6 @@ def get_intersection_speaker(seg_start, seg_end, speaker_turns):
 def get_optimized_scores(windows, embedder, classifier_pipe):
     if not windows: return [], []
     
-    # Pre-encode anchors
     anchor_embeddings = embedder.encode(Config.ANCHOR_THEMES, convert_to_tensor=True)
     window_texts = [w['text'] for w in windows]
     window_embeddings = embedder.encode(window_texts, convert_to_tensor=True)
@@ -126,8 +133,8 @@ def process_audio(audio_path, progress=gr.Progress()):
     session_dir.mkdir(parents=True, exist_ok=True)
     
     try:
-        # 1. Diarization (High RAM - Processed First)
-        progress(0.1, desc="Step 1: Identifying Speakers (Slow for long files)...")
+        # 1. Diarization
+        progress(0.1, desc="Step 1: Identifying Speakers...")
         diar_pipe = DiarizationPipeline.from_pretrained(Config.DIARIZATION_MODEL, use_auth_token=Config.HF_TOKEN)
         diar_map = diar_pipe(audio_path)
         speaker_turns = [{'start': t.start, 'end': t.end, 'speaker': s} for t, _, s in diar_map.itertracks(yield_label=True)]
@@ -135,8 +142,8 @@ def process_audio(audio_path, progress=gr.Progress()):
         del diar_pipe 
         clear_memory()
 
-        # 2. Transcription (CPU Optimized)
-        progress(0.4, desc="Step 2: Transcribing Audio (Generating text)...")
+        # 2. Transcription
+        progress(0.4, desc="Step 2: Transcribing Audio...")
         whisper = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
         segments, _ = whisper.transcribe(audio_path, vad_filter=True)
         
@@ -148,10 +155,10 @@ def process_audio(audio_path, progress=gr.Progress()):
         del whisper
         clear_memory()
 
-        # 3. Scoring & NLP
+        # 3. Scoring
         progress(0.7, desc="Step 3: Finding Viral Moments...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
-        classifier = pipeline("zero-shot-classification", model=Config.CLASSIFIER_MODEL, device=-1) # -1 is CPU
+        classifier = pipeline("zero-shot-classification", model=Config.CLASSIFIER_MODEL, device=-1)
         
         windows = []
         for i in range(len(processed_segs)):
@@ -211,7 +218,7 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
     session_state = gr.State("")
     
     gr.Markdown("# 🎙️ Podcast AI: Viral Insight Extractor")
-    gr.Markdown("Upload up to 60 min of audio. **Privacy Note:** Press 'Done' to delete all session data. Closing the tab will also trigger a warning.")
+    gr.Markdown("Upload audio to extract the most engaging moments. **Privacy Note:** Your files are processed in a temporary session and deleted when you click 'Done' or close the tab.")
     
     with gr.Row():
         with gr.Column(scale=1):
@@ -241,13 +248,22 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
         outputs=[transcript, status, c1, c2, c3, audio_in, session_state]
     )
 
-    # Automatic cleanup attempt on disconnect
     demo.unload(cleanup_session, inputs=session_state)
 
 if __name__ == "__main__":
-    # Clean up any leftover folders from previous runs on startup
+    # 1. Validate Secret Token
+    try:
+        Config.validate_env()
+    except EnvironmentError as e:
+        logger.error(f"Setup Error: {e}")
+        # In a headless environment, we want to stop execution if the token is missing
+        import sys
+        sys.exit(1)
+
+    # 2. Pre-launch cleanup
     temp_path = Path(tempfile.gettempdir())
     for old_session in temp_path.glob("session_*"):
         shutil.rmtree(old_session, ignore_errors=True)
         
+    # 3. Launch
     demo.queue(max_size=3).launch()

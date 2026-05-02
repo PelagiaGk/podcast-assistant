@@ -1,8 +1,11 @@
-gradio==5.0.0
-openai-whisper
+gradio
 librosa
 pydub
 numpy
 torch
 transformers
 spaces
+faster-whisper
+pyannote.audio
+sentence-transformers
+python-dotenv
