@@ -1,4 +1,4 @@
-# --- Configuration & Logging ---
+#Configuration & Logging
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PodcastAI-Public")
@@ -33,5 +33,5 @@ class Config:
         """Checks for required secrets before running."""
         if not cls.HF_TOKEN:
             raise EnvironmentError(
-                "HF_TOKEN is missing. Add it to GitHub Codespaces Secrets and restart your instance."
+                "HF_TOKEN is missing."
             )

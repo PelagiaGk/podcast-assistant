@@ -1,4 +1,3 @@
-# --- Resource Management ---
 import torch
 import os
 import uuid
@@ -15,6 +14,7 @@ from pyannote.audio import Pipeline as DiarizationPipeline
 from sentence_transformers import SentenceTransformer, util
 from config import Config
 
+# Resource Management
 def clear_memory():
     """Aggressively clears RAM."""
     gc.collect()
@@ -37,7 +37,7 @@ def cleanup_session(session_path):
     clear_memory()
     return [None, "Session Scrubbed. Files deleted.", None, None, None, None, ""]
 
-# --- Audio Logic ---
+#Audio Logic 
 
 def get_intersection_speaker(seg_start, seg_end, speaker_turns):
     best_speaker = "Unknown"

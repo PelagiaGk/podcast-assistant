@@ -5,7 +5,7 @@ from pathlib import Path
 from config import Config
 from logic import process_audio, cleanup_session
 
-# --- JavaScript ---
+# JavaScript 
 warning_js = """
 function() {
     window.onbeforeunload = function() {
@@ -17,19 +17,19 @@ function() {
 with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as demo:
     session_state = gr.State("")
     
-    gr.Markdown("# 🎙️ Podcast AI: Viral Insight Extractor")
+    gr.Markdown("Podcast AI: Viral Insight Extractor")
     
     with gr.Row():
         with gr.Column(scale=1):
             audio_in = gr.Audio(label="Upload Audio", type="filepath")
-            run_btn = gr.Button("🚀 Process Audio", variant="primary")
+            run_btn = gr.Button("Process Audio", variant="primary")
             status = gr.Textbox(label="Status", interactive=False)
-            done_btn = gr.Button("🗑️ Done - Delete Files", variant="stop")
+            done_btn = gr.Button("Done", variant="stop")
             
         with gr.Column(scale=2):
             transcript = gr.Textbox(label="Transcript", lines=12, interactive=False)
 
-    gr.Markdown("### 🌟 AI Selected Viral Hooks")
+    gr.Markdown("Selected Viral Hooks")
     with gr.Row():
         c1 = gr.Audio(label="Hook 1", interactive=False)
         c2 = gr.Audio(label="Hook 2", interactive=False)
@@ -58,7 +58,7 @@ if __name__ == "__main__":
         shutil.rmtree(old_session, ignore_errors=True)
         
     demo.queue(max_size=3).launch()
-# --- JavaScript for Browser Warning ---
+# JavaScript for Browser Warning 
 warning_js = """
 function() {
     window.onbeforeunload = function() {
@@ -66,25 +66,25 @@ function() {
     };
 }
 """
-# --- UI Interface ---
+# UI Interface 
 
 with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as demo:
     session_state = gr.State("")
     
-    gr.Markdown("# 🎙️ Podcast AI: Viral Insight Extractor")
+    gr.Markdown("Podcast AI: Viral Insight Extractor")
     gr.Markdown("Upload audio to extract the most engaging moments. **Privacy Note:** Your files are processed in a temporary session and deleted when you click 'Done' or close the tab.")
     
     with gr.Row():
         with gr.Column(scale=1):
             audio_in = gr.Audio(label="Upload Audio", type="filepath")
-            run_btn = gr.Button("🚀 Process Audio", variant="primary")
+            run_btn = gr.Button("Process Audio", variant="primary")
             status = gr.Textbox(label="Status", interactive=False)
-            done_btn = gr.Button("🗑️ Done - Delete Files", variant="stop")
+            done_btn = gr.Button("Done", variant="stop")
             
         with gr.Column(scale=2):
             transcript = gr.Textbox(label="Transcript", lines=12, interactive=False)
 
-    gr.Markdown("### 🌟 AI Selected Viral Hooks")
+    gr.Markdown("Selected Viral Hooks")
     with gr.Row():
         c1 = gr.Audio(label="Hook 1", interactive=False)
         c2 = gr.Audio(label="Hook 2", interactive=False)
