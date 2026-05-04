@@ -1,6 +1,5 @@
 ---
 title: My Project Name
-emoji: 🚀
 colorFrom: blue
 colorTo: indigo
 sdk: gradio
@@ -10,8 +9,9 @@ pinned: false
 ---
 
 # My Project
-This project is synced from GitHub to Hugging Face Spaces.
+This project is utilizing GitHub, Oracle Cloud and Gradio for the build and deployment.
 
 
 # podcast-assistant
-An automated assistant for podcast creators to easily find promotion-worthy clips from their episodes and ensure they follow copyright rules. 
+An automated assistant for podcast creators to easily find promotion-worthy clips from their episodes.
+
