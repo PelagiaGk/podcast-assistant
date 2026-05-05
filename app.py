@@ -14,7 +14,7 @@ function() {
 }
 """
 
-with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as demo:
+with gr.Blocks(theme=gr.Theme.from_hub("theme-repo/STONE_Theme")) as demo:
     session_state = gr.State("")
     
     gr.Markdown("Podcast AI: Viral Insight Extractor")
