@@ -27,3 +27,4 @@ jobs:
           huggingface_repo_id: Pelagia-Gk/podcast-assistant
           repo_type: space
           hf_token: ${{ secrets.HF_TOKEN }}
+

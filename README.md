@@ -1,5 +1,5 @@
 ---
-title: My Project Name
+title: Podcasters Hub
 colorFrom: blue
 colorTo: indigo
 sdk: gradio
@@ -9,9 +9,8 @@ pinned: false
 ---
 
 # My Project
-This project is utilizing GitHub, Oracle Cloud and Gradio for the build and deployment.
+This project is synced from GitHub to Hugging Face Spaces.
 
 
 # podcast-assistant
 An automated assistant for podcast creators to easily find promotion-worthy clips from their episodes.
-
