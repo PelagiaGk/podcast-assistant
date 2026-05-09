@@ -1,5 +1,5 @@
 ---
-title: Podcasters Hub
+title: Podcast Assistant
 colorFrom: blue
 colorTo: indigo
 sdk: gradio

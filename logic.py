@@ -26,7 +26,7 @@ def cleanup_session(session_path):
     if session_path and os.path.exists(session_path):
         try:
             shutil.rmtree(session_path)
-            logger.info(f"🧹 Session directory deleted: {session_path}")
+            logger.info(f"Session directory deleted: {session_path}")
         except Exception as e:
             logger.error(f"Error deleting session: {e}")
     
@@ -84,7 +84,7 @@ def process_audio(audio_path, progress=gr.Progress()):
     session_dir.mkdir(parents=True, exist_ok=True)
     
     try:
-        # 1. Diarization
+        #Diarization
         progress(0.1, desc="Step 1: Identifying Speakers")
         diar_pipe = DiarizationPipeline.from_pretrained(Config.DIARIZATION_MODEL, use_auth_token=Config.HF_TOKEN)
         diar_map = diar_pipe(audio_path)
@@ -93,7 +93,7 @@ def process_audio(audio_path, progress=gr.Progress()):
         del diar_pipe 
         clear_memory()
 
-        # 2. Transcription
+        #Transcription
         progress(0.4, desc="Step 2: Transcribing Audio")
         whisper = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
         segments, _ = whisper.transcribe(audio_path, vad_filter=True)
@@ -106,7 +106,7 @@ def process_audio(audio_path, progress=gr.Progress()):
         del whisper
         clear_memory()
 
-        # 3. Scoring
+        #Scoring
         progress(0.7, desc="Step 3: Finding Viral Moments")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         classifier = pipeline("zero-shot-classification", model=Config.CLASSIFIER_MODEL, device=-1)
@@ -138,7 +138,7 @@ def process_audio(audio_path, progress=gr.Progress()):
                     cand['idx'] = i
                     selected.append(cand)
 
-        # 4. Exporting
+        #Exporting
         progress(0.9, desc="Step 4: Finalizing Clips...")
         audio = AudioSegment.from_file(audio_path)
         normalized_audio = normalize(audio)

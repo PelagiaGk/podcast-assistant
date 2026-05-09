@@ -5,7 +5,7 @@ from pathlib import Path
 from config import Config
 from logic import process_audio, cleanup_session
 
-# JavaScript 
+#JavaScript 
 warning_js = """
 function() {
     window.onbeforeunload = function() {
@@ -17,7 +17,7 @@ function() {
 with gr.Blocks(theme=gr.Theme.from_hub("theme-repo/STONE_Theme")) as demo:
     session_state = gr.State("")
     
-    gr.Markdown("Podcast AI: Viral Insight Extractor")
+    gr.Markdown("Podcast Assistant - Viral Clips Extractor")
     
     with gr.Row():
         with gr.Column(scale=1):
@@ -52,13 +52,13 @@ with gr.Blocks(theme=gr.Theme.from_hub("theme-repo/STONE_Theme")) as demo:
 if __name__ == "__main__":
     Config.validate_env()
     
-    # Pre-launch cleanup
+    #Pre-launch cleanup
     temp_path = Path(tempfile.gettempdir())
     for old_session in temp_path.glob("session_*"):
         shutil.rmtree(old_session, ignore_errors=True)
         
     demo.queue(max_size=3).launch()
-# JavaScript for Browser Warning 
+#JavaScript for Browser Warning 
 warning_js = """
 function() {
     window.onbeforeunload = function() {
@@ -66,12 +66,12 @@ function() {
     };
 }
 """
-# UI Interface 
+#UI Interface 
 
 with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as demo:
     session_state = gr.State("")
     
-    gr.Markdown("Podcast AI: Viral Insight Extractor")
+    gr.Markdown("Podcast Assistant - Viral Clips Extractor")
     gr.Markdown("Upload audio to extract the most engaging moments. **Privacy Note:** Your files are processed in a temporary session and deleted when you click 'Done' or close the tab.")
     
     with gr.Row():
@@ -105,19 +105,19 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
     demo.unload(cleanup_session, inputs=session_state)
 
 if __name__ == "__main__":
-    # 1. Validate Secret Token
+    #Validate Secret Token
     try:
         Config.validate_env()
     except EnvironmentError as e:
         logger.error(f"Setup Error: {e}")
-        # In a headless environment, we want to stop execution if the token is missing
+        # In a headless environment stop execution if the token is missing
         import sys
         sys.exit(1)
 
-    # 2. Pre-launch cleanup
+    #Pre-launch cleanup
     temp_path = Path(tempfile.gettempdir())
     for old_session in temp_path.glob("session_*"):
         shutil.rmtree(old_session, ignore_errors=True)
         
-    # 3. Launch
+    #Launch
     demo.queue(max_size=3).launch()

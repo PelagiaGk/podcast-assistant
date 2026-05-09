@@ -1,15 +1,14 @@
 #Configuration & Logging
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("PodcastAI-Public")
+logger = logging.getLogger("Podcast Assistant")
 
 class Config:
-    # Pulls from GitHub Codespaces Secrets or .env file
     HF_TOKEN = os.getenv("HF_TOKEN")
     DEVICE = "cpu"  
-    COMPUTE_TYPE = "int8" # Saves 50% RAM on CPU
+    COMPUTE_TYPE = "int8" #Saves 50% RAM on CPU
     
-    # Model Selection
+    #Model Selection
     WHISPER_MODEL = "distil-large-v3" 
     CLASSIFIER_MODEL = "valhalla/distilbart-mnli-12-1" 
     EMBEDDER_MODEL = "all-MiniLM-L6-v2"
