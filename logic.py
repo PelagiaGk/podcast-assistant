@@ -85,7 +85,7 @@ def process_audio(audio_path, progress=gr.Progress()):
     
     try:
         # 1. Diarization
-        progress(0.1, desc="Step 1: Identifying Speakers...")
+        progress(0.1, desc="Step 1: Identifying Speakers")
         diar_pipe = DiarizationPipeline.from_pretrained(Config.DIARIZATION_MODEL, use_auth_token=Config.HF_TOKEN)
         diar_map = diar_pipe(audio_path)
         speaker_turns = [{'start': t.start, 'end': t.end, 'speaker': s} for t, _, s in diar_map.itertracks(yield_label=True)]
@@ -94,7 +94,7 @@ def process_audio(audio_path, progress=gr.Progress()):
         clear_memory()
 
         # 2. Transcription
-        progress(0.4, desc="Step 2: Transcribing Audio...")
+        progress(0.4, desc="Step 2: Transcribing Audio")
         whisper = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
         segments, _ = whisper.transcribe(audio_path, vad_filter=True)
         
@@ -107,7 +107,7 @@ def process_audio(audio_path, progress=gr.Progress()):
         clear_memory()
 
         # 3. Scoring
-        progress(0.7, desc="Step 3: Finding Viral Moments...")
+        progress(0.7, desc="Step 3: Finding Viral Moments")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         classifier = pipeline("zero-shot-classification", model=Config.CLASSIFIER_MODEL, device=-1)
         

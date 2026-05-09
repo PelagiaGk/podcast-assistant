@@ -33,5 +33,5 @@ class Config:
         """Checks for required secrets before running."""
         if not cls.HF_TOKEN:
             raise EnvironmentError(
-                "HF_TOKEN is missing."
+                "Env Error"
             )
