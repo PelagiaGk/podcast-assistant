@@ -1,10 +1,10 @@
+huggingface_hub==0.23.2
+numpy<2.0.0
 librosa
 pydub
-numpy<2.0.0
 torch
 transformers
 faster-whisper
 pyannote.audio
 sentence-transformers
 python-dotenv
-huggingface_hub==0.23.2
