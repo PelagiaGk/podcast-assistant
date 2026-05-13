@@ -47,7 +47,7 @@ with gr.Blocks(theme=gr.Theme.from_hub("theme-repo/STONE_Theme")) as demo:
         outputs=[transcript, status, c1, c2, c3, audio_in, session_state]
     )
 
-    demo.unload(cleanup_session, inputs=session_state)
+    demo.unload(cleanup_session)
 
 if __name__ == "__main__":
     Config.validate_env()
