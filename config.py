@@ -1,4 +1,7 @@
 #Configuration & Logging
+from dotenv import load_dotenv
+import os
+
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Podcast Assistant")
