@@ -1,12 +1,9 @@
-gradio
 librosa
 pydub
 numpy
 torch
 transformers
-spaces
 faster-whisper
 pyannote.audio
 sentence-transformers
 python-dotenv
-huggingface_hub
