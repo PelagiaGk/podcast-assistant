@@ -78,7 +78,7 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
         with gr.Column(scale=1):
             audio_in = gr.Audio(label="Upload Audio", type="filepath")
             run_btn = gr.Button("Process Audio", variant="primary")
-            status = gr.Textbox(label="Status", interactive=False)
+            status = gr.Textbox(label="Status", placeholder="Ready...")
             done_btn = gr.Button("Done", variant="stop")
             
         with gr.Column(scale=2):
