@@ -9,3 +9,4 @@ faster-whisper
 pyannote.audio
 sentence-transformers
 python-dotenv
+huggingface_hub==0.11.0
