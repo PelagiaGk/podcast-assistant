@@ -13,6 +13,7 @@ from transformers import pipeline
 from pyannote.audio import Pipeline as DiarizationPipeline
 from sentence_transformers import SentenceTransformer, util
 from config import Config
+import gradio as gr
 
 # Resource Management
 def clear_memory():
