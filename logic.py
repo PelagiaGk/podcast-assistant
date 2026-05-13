@@ -22,21 +22,22 @@ def clear_memory():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-def cleanup_session(session_path):
+def cleanup_session(session_path=None):
     """Deletes temporary files and Gradio's internal cache."""
-    if session_path and os.path.exists(session_path):
-        try:
-            shutil.rmtree(session_path)
-            logger.info(f"Session directory deleted: {session_path}")
-        except Exception as e:
-            logger.error(f"Error deleting session: {e}")
+    if session_path is not None:
+        if session_path and os.path.exists(session_path):
+            try:
+                shutil.rmtree(session_path)
+                logger.info(f"Session directory deleted: {session_path}")
+            except Exception as e:
+                logger.error(f"Error deleting session: {e}")
     
-    gradio_tmp = os.path.join(tempfile.gettempdir(), "gradio")
-    if os.path.exists(gradio_tmp):
-        shutil.rmtree(gradio_tmp, ignore_errors=True)
+        gradio_tmp = os.path.join(tempfile.gettempdir(), "gradio")
+        if os.path.exists(gradio_tmp):
+            shutil.rmtree(gradio_tmp, ignore_errors=True)
         
-    clear_memory()
-    return [None, "Session Scrubbed. Files deleted.", None, None, None, None, ""]
+        clear_memory()
+        pass
 
 #Audio Logic 
 
