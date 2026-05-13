@@ -1,9 +1,10 @@
 librosa
 pydub
-numpy
+numpy<2.0.0
 torch
 transformers
 faster-whisper
 pyannote.audio
 sentence-transformers
 python-dotenv
+huggingface_hub==0.23.2

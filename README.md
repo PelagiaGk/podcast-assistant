@@ -1,10 +1,8 @@
 ---
 title: Podcast Assistant
-colorFrom: blue
-colorTo: indigo
 sdk: gradio
 sdk_version: 4.44.1
-python_version: 3.11
+python_version: 3.10
 models:
   - pyannote/segmentation-3.0
   - pyannote/speaker-diarization-3.1
