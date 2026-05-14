@@ -12,34 +12,28 @@ from pydub.effects import normalize
 from transformers import pipeline
 from pyannote.audio import Pipeline as DiarizationPipeline
 from sentence_transformers import SentenceTransformer, util
+from moviepy.editor import VideoFileClip # New dependency
 from config import Config
 import gradio as gr
 
-# Resource Management
+logger = logging.getLogger(__name__)
+
 def clear_memory():
-    """Aggressively clears RAM."""
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
 def cleanup_session(session_path=None):
-    """Deletes temporary files and Gradio's internal cache."""
-    if session_path is not None:
-        if session_path and os.path.exists(session_path):
-            try:
-                shutil.rmtree(session_path)
-                logger.info(f"Session directory deleted: {session_path}")
-            except Exception as e:
-                logger.error(f"Error deleting session: {e}")
+    if session_path and os.path.exists(session_path):
+        try:
+            shutil.rmtree(session_path)
+        except Exception as e:
+            logger.error(f"Error deleting session: {e}")
     
-        gradio_tmp = os.path.join(tempfile.gettempdir(), "gradio")
-        if os.path.exists(gradio_tmp):
-            shutil.rmtree(gradio_tmp, ignore_errors=True)
-        
-        clear_memory()
-        pass
-
-#Audio Logic 
+    gradio_tmp = os.path.join(tempfile.gettempdir(), "gradio")
+    if os.path.exists(gradio_tmp):
+        shutil.rmtree(gradio_tmp, ignore_errors=True)
+    clear_memory()
 
 def get_intersection_speaker(seg_start, seg_end, speaker_turns):
     best_speaker = "Unknown"
@@ -53,62 +47,62 @@ def get_intersection_speaker(seg_start, seg_end, speaker_turns):
 
 def get_optimized_scores(windows, embedder, classifier_pipe):
     if not windows: return [], []
-    
     anchor_embeddings = embedder.encode(Config.ANCHOR_THEMES, convert_to_tensor=True)
     window_texts = [w['text'] for w in windows]
     window_embeddings = embedder.encode(window_texts, convert_to_tensor=True)
-    
     cosine_scores = util.cos_sim(window_embeddings, anchor_embeddings).max(dim=1).values
     threshold = torch.quantile(cosine_scores, 0.7) if len(cosine_scores) > 1 else 0
     candidate_indices = [i for i, score in enumerate(cosine_scores) if score >= threshold]
-    
     final_scores = [0.0] * len(windows)
     final_labels = ["Uncategorized"] * len(windows)
-    
     if candidate_indices:
         candidate_texts = [windows[i]['text'] for i in candidate_indices]
         results = classifier_pipe(candidate_texts, Config.ANCHOR_THEMES, batch_size=1)
-        
         for idx, res in zip(candidate_indices, results):
             s_map = dict(zip(res['labels'], res['scores']))
             score = sum(s_map[label] * Config.WEIGHTS[label] for label in Config.ANCHOR_THEMES)
             final_scores[idx] = score
             final_labels[idx] = res['labels'][0]
-            
     return final_scores, final_labels
 
 @torch.inference_mode()
-def process_audio(audio_path, progress=gr.Progress()):
-    if not audio_path: return [None]*7
+def process_media(file_path, progress=gr.Progress()):
+    if not file_path: return [None]*7
     
     session_id = str(uuid.uuid4())
     session_dir = Path(tempfile.gettempdir()) / f"session_{session_id}"
     session_dir.mkdir(parents=True, exist_ok=True)
     
+    # Determine if video or audio
+    is_video = file_path.lower().endswith(('.mp4', '.mkv', '.mov', '.avi'))
+    processing_path = file_path
+
     try:
-        #Diarization
+        # Step 0: Video to Audio extraction (if necessary)
+        if is_video:
+            progress(0.05, desc="Extracting audio from video...")
+            video = VideoFileClip(file_path)
+            processing_path = str(session_dir / "extracted_audio.wav")
+            video.audio.write_audiofile(processing_path, logger=None)
+            video.close()
+
+        # Step 1: Diarization
         progress(0.1, desc="Step 1: Identifying Speakers")
         diar_pipe = DiarizationPipeline.from_pretrained(Config.DIARIZATION_MODEL, use_auth_token=Config.HF_TOKEN)
-        diar_map = diar_pipe(audio_path)
+        diar_map = diar_pipe(processing_path)
         speaker_turns = [{'start': t.start, 'end': t.end, 'speaker': s} for t, _, s in diar_map.itertracks(yield_label=True)]
-        
         del diar_pipe 
         clear_memory()
 
-        #Transcription
-        progress(0.4, desc="Step 2: Transcribing Audio")
+        # Step 2: Transcription
+        progress(0.4, desc="Step 2: Transcribing")
         whisper = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
-        segments, _ = whisper.transcribe(audio_path, vad_filter=True)
-        
-        processed_segs = []
-        for s in segments:
-            spk = get_intersection_speaker(s.start, s.end, speaker_turns)
-            processed_segs.append({'text': s.text.strip(), 'start': s.start, 'end': s.end, 'speaker': spk})
-        
+        segments, _ = whisper.transcribe(processing_path, vad_filter=True)
+        processed_segs = [{'text': s.text.strip(), 'start': s.start, 'end': s.end, 'speaker': get_intersection_speaker(s.start, s.end, speaker_turns)} for s in segments]
         del whisper
         clear_memory()
 
-        #Scoring
+        # Step 3: Scoring
         progress(0.7, desc="Step 3: Finding Viral Moments")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         classifier = pipeline("zero-shot-classification", model=Config.CLASSIFIER_MODEL, device=-1)
@@ -130,7 +124,6 @@ def process_audio(audio_path, progress=gr.Progress()):
             w['score'], w['label'] = scores[i], labels[i]
         
         ranked = sorted([w for w in windows if w['score'] > 0.5], key=lambda x: x['score'], reverse=True)
-        
         selected = []
         if ranked:
             embeddings = embedder.encode([r['text'] for r in ranked], convert_to_tensor=True)
@@ -140,25 +133,30 @@ def process_audio(audio_path, progress=gr.Progress()):
                     cand['idx'] = i
                     selected.append(cand)
 
-        #Exporting
+        # Step 4: Exporting
         progress(0.9, desc="Step 4: Finalizing Clips...")
-        audio = AudioSegment.from_file(audio_path)
-        normalized_audio = normalize(audio)
-        
         clips = []
-        for i, hook in enumerate(selected):
-            start_ms, end_ms = int(hook['start'] * 1000), int(hook['end'] * 1000)
-            path = session_dir / f"hook_{i+1}.mp3"
-            normalized_audio[start_ms:end_ms].fade_in(200).fade_out(200).export(str(path), format="mp3")
-            clips.append(str(path))
+        
+        if is_video:
+            video_full = VideoFileClip(file_path)
+            for i, hook in enumerate(selected):
+                path = session_dir / f"clip_{i+1}.mp4"
+                video_full.subclip(hook['start'], hook['end']).write_videofile(str(path), codec="libx264", audio_codec="aac", logger=None)
+                clips.append(str(path))
+            video_full.close()
+        else:
+            audio = AudioSegment.from_file(file_path)
+            normalized_audio = normalize(audio)
+            for i, hook in enumerate(selected):
+                path = session_dir / f"hook_{i+1}.mp3"
+                normalized_audio[int(hook['start']*1000):int(hook['end']*1000)].fade_in(200).fade_out(200).export(str(path), format="mp3")
+                clips.append(str(path))
 
         while len(clips) < 3: clips.append(None)
-        
         full_transcript = "\n".join([f"[{s['speaker']}] {s['text']}" for s in processed_segs])
         
-        del embedder, classifier, audio, normalized_audio
+        del embedder, classifier
         clear_memory()
-        
         return full_transcript, f"✅ Clips Ready!", *clips, str(session_dir)
 
     except Exception as e:

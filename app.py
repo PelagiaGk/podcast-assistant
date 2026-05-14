@@ -4,62 +4,80 @@ import tempfile
 import logging
 from pathlib import Path
 from config import Config
-from logic import process_audio, cleanup_session
+# Note: Ensure logic.py uses the updated 'process_media' function name
+from logic import process_media, cleanup_session 
 
-#Configure logging
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-#JavaScript for Warning 
+# JavaScript for Warning 
 warning_js = """
 function() {
     window.onbeforeunload = function() {
-        return "Warning: Your session data and audio clips will be permanently deleted if you leave this page.";
+        return "Warning: Your session data and clips will be permanently deleted if you leave this page.";
     };
 }
 """
 
-#UI Interface
+def reset_ui():
+    """Returns empty values to reset the UI components after cleanup."""
+    return "", "Session Cleaned", None, None, None, None, ""
+
+# UI Interface
 with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as demo:
     session_state = gr.State("")
     
-    gr.Markdown("Podcast Assistant - Viral Clips Extractor")
-    gr.Markdown("Upload audio to extract engaging moments. **Privacy Note:** Files are deleted when you click 'Done' or close the tab.")
+    gr.Markdown("# Podcast & Video Assistant - Viral Clips Extractor")
+    gr.Markdown("Upload **audio** or **video** to extract engaging moments. **Privacy Note:** Files are deleted when you click 'Done' or close the tab.")
     
     with gr.Row():
         with gr.Column(scale=1):
-            audio_in = gr.Audio(label="Upload Audio", type="filepath")
-            run_btn = gr.Button("Process Audio", variant="primary")
+            # Combined File input to handle both formats easily
+            media_in = gr.File(
+                label="Upload Audio or Video", 
+                file_types=["audio", "video"],
+                type="filepath"
+            )
+            run_btn = gr.Button("Process Media", variant="primary")
             
         with gr.Column(scale=2):
             transcript = gr.Textbox(label="Transcript", lines=14)
+
     with gr.Row():
         status = gr.Textbox(label="Status", placeholder="Waiting for upload")
 
-    gr.Markdown("Selected Viral Clips")
+    gr.Markdown("### Selected Viral Clips")
     with gr.Row():
-        c1 = gr.Audio(label="Clip 1")
-        c2 = gr.Audio(label="Clip 2")
-        c3 = gr.Audio(label="Clip 3")
+        # Using gr.File for outputs allows Gradio to automatically 
+        # provide the correct player (Audio or Video) based on the file extension.
+        c1 = gr.File(label="Clip 1")
+        c2 = gr.File(label="Clip 2")
+        c3 = gr.File(label="Clip 3")
+
     with gr.Row():
         done_btn = gr.Button("Done", variant="stop")
 
-    #Event Listeners
+    # Event Listeners
     run_btn.click(
-        process_audio, 
-        inputs=audio_in, 
+        fn=process_media, 
+        inputs=media_in, 
         outputs=[transcript, status, c1, c2, c3, session_state]
     )
     
+    # Cleanup logic: Deletes files then clears the UI
     done_btn.click(
-        cleanup_session,
-        inputs=session_state,
-        outputs=[transcript, status, c1, c2, c3, audio_in, session_state]
+        fn=cleanup_session,
+        inputs=session_state
+    ).then(
+        fn=reset_ui,
+        outputs=[transcript, status, c1, c2, c3, media_in, session_state]
     )
-    demo.unload(fn=cleanup_session)
+
+    demo.unload(fn=cleanup_session, inputs=session_state)
 
 if __name__ == "__main__":
-    #Validate Secrets
+    # Validate Secrets
     try:
         Config.validate_env()
     except Exception as e:
@@ -67,10 +85,10 @@ if __name__ == "__main__":
         import sys
         sys.exit(1)
 
-    #Pre-launch temp cleanup
+    # Pre-launch temp cleanup for public safety
     temp_path = Path(tempfile.gettempdir())
     for old_session in temp_path.glob("session_*"):
         shutil.rmtree(old_session, ignore_errors=True)
         
-    #Launch with max protection against schema bugs
+    # Launch
     demo.queue(max_size=3).launch(show_api=False, server_name="0.0.0.0")

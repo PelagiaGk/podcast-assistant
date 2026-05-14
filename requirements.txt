@@ -11,3 +11,7 @@ transformers
 sentence-transformers
 librosa
 pydub
+moviepy
+python-magic
+pathlib
+uuid
