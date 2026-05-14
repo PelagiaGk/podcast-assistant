@@ -54,7 +54,7 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
         inputs=session_state,
         outputs=[transcript, status, c1, c2, c3, audio_in, session_state]
     )
-    demo.unload(fn=cleanup_session, inputs=session_state)
+    demo.unload(fn=cleanup_session)
 
 if __name__ == "__main__":
     #Validate Secrets
