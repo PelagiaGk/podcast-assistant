@@ -18,10 +18,16 @@ class Config:
     EMBEDDER_MODEL = "all-MiniLM-L6-v2"
     DIARIZATION_MODEL = "pyannote/speaker-diarization-3.1"
     
+    MAX_FILE_SIZE_MB = 500
+    MAX_CLIP_DURATION = 120
     MIN_WORDS_FOR_HOOK = 30 
-    MAX_CLIP_DURATION = 90 
     SIMILARITY_THRESHOLD = 0.45 
     
+    VIDEO_EXTENSIONS = ('.mp4', '.mkv', '.mov', '.avi', '.webm')
+    AUDIO_EXTENSIONS = ('.mp3', '.wav', '.m4a', '.flac')
+    
+    WHISPER_VAD_FILTER = True
+
     WEIGHTS = {
         "profound insight": 5.0,
         "actionable advice": 4.5,

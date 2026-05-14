@@ -4,14 +4,13 @@ import tempfile
 import logging
 from pathlib import Path
 from config import Config
-# Note: Ensure logic.py uses the updated 'process_media' function name
 from logic import process_media, cleanup_session 
 
-# Configure logging
+#Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# JavaScript for Warning 
+#JavaScript for Warning 
 warning_js = """
 function() {
     window.onbeforeunload = function() {
@@ -24,7 +23,7 @@ def reset_ui():
     """Returns empty values to reset the UI components after cleanup."""
     return "", "Session Cleaned", None, None, None, None, ""
 
-# UI Interface
+#UI Interface
 with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as demo:
     session_state = gr.State("")
     
@@ -33,7 +32,6 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
     
     with gr.Row():
         with gr.Column(scale=1):
-            # Combined File input to handle both formats easily
             media_in = gr.File(
                 label="Upload Audio or Video", 
                 file_types=["audio", "video"],
@@ -49,8 +47,6 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
 
     gr.Markdown("### Selected Viral Clips")
     with gr.Row():
-        # Using gr.File for outputs allows Gradio to automatically 
-        # provide the correct player (Audio or Video) based on the file extension.
         c1 = gr.File(label="Clip 1")
         c2 = gr.File(label="Clip 2")
         c3 = gr.File(label="Clip 3")
@@ -58,14 +54,14 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
     with gr.Row():
         done_btn = gr.Button("Done", variant="stop")
 
-    # Event Listeners
+    #Event Listeners
     run_btn.click(
         fn=process_media, 
         inputs=media_in, 
         outputs=[transcript, status, c1, c2, c3, session_state]
     )
     
-    # Cleanup logic: Deletes files then clears the UI
+    #Cleanup logic: Deletes files then clears the UI
     done_btn.click(
         fn=cleanup_session,
         inputs=session_state
@@ -74,10 +70,10 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
         outputs=[transcript, status, c1, c2, c3, media_in, session_state]
     )
 
-    demo.unload(fn=cleanup_session, inputs=session_state)
+    demo.unload(fn=cleanup_session)
 
 if __name__ == "__main__":
-    # Validate Secrets
+    #Validate Secrets
     try:
         Config.validate_env()
     except Exception as e:
@@ -85,10 +81,10 @@ if __name__ == "__main__":
         import sys
         sys.exit(1)
 
-    # Pre-launch temp cleanup for public safety
+    #Pre-launch temp cleanup for safety
     temp_path = Path(tempfile.gettempdir())
     for old_session in temp_path.glob("session_*"):
         shutil.rmtree(old_session, ignore_errors=True)
         
-    # Launch
+    #Launch
     demo.queue(max_size=3).launch(show_api=False, server_name="0.0.0.0")

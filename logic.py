@@ -14,6 +14,7 @@ from pyannote.audio import Pipeline as DiarizationPipeline
 from sentence_transformers import SentenceTransformer, util
 from config import Config
 import gradio as gr
+
 try:
     from moviepy.editor import VideoFileClip
 except ImportError:
@@ -76,37 +77,61 @@ def process_media(file_path, progress=gr.Progress()):
     session_dir = Path(tempfile.gettempdir()) / f"session_{session_id}"
     session_dir.mkdir(parents=True, exist_ok=True)
     
-    # Determine if video or audio
-    is_video = file_path.lower().endswith(('.mp4', '.mkv', '.mov', '.avi'))
+    is_video = file_path.lower().endswith(('.mp4', '.mkv', '.mov', '.avi', '.webm'))
     processing_path = file_path
 
     try:
-        # Step 0: Video to Audio extraction (if necessary)
+        #Video to Audio extraction (Podcast Optimized)
         if is_video:
-            progress(0.05, desc="Extracting audio from video...")
+            progress(0.05, desc="Extracting audio (Optimizing for RAM)...")
             video = VideoFileClip(file_path)
             processing_path = str(session_dir / "extracted_audio.wav")
-            video.audio.write_audiofile(processing_path, logger=None)
+            #Downsampling to 16kHz Mono for long podcasts
+            video.audio.write_audiofile(
+                processing_path, 
+                fps=16000, 
+                nbytes=2, 
+                buffersize=2000, 
+                ffmpeg_params=["-ac", "1"], 
+                logger=None
+            )
             video.close()
+            clear_memory()
 
-        # Step 1: Diarization
-        progress(0.1, desc="Step 1: Identifying Speakers")
+        #Diarization
+        progress(0.1, desc="Identifying Speakers (This may take a while for long files...)")
         diar_pipe = DiarizationPipeline.from_pretrained(Config.DIARIZATION_MODEL, use_auth_token=Config.HF_TOKEN)
         diar_map = diar_pipe(processing_path)
         speaker_turns = [{'start': t.start, 'end': t.end, 'speaker': s} for t, _, s in diar_map.itertracks(yield_label=True)]
         del diar_pipe 
         clear_memory()
 
-        # Step 2: Transcription
-        progress(0.4, desc="Step 2: Transcribing")
+        #Transcription (Iterative for long files)
+        progress(0.3, desc="Starting Transcription...")
         whisper = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
-        segments, _ = whisper.transcribe(processing_path, vad_filter=True)
-        processed_segs = [{'text': s.text.strip(), 'start': s.start, 'end': s.end, 'speaker': get_intersection_speaker(s.start, s.end, speaker_turns)} for s in segments]
+        # Using a generator to update progress for long podcasts
+        segments_gen, info = whisper.transcribe(processing_path, vad_filter=True)
+        
+        processed_segs = []
+        #total_duration helps calculate percentage
+        total_duration = info.duration
+        
+        for s in segments_gen:
+            processed_segs.append({
+                'text': s.text.strip(), 
+                'start': s.start, 
+                'end': s.end, 
+                'speaker': get_intersection_speaker(s.start, s.end, speaker_turns)
+            })
+            #Update progress bar every segment based on time elapsed
+            current_progress = 0.3 + (s.end / total_duration * 0.4) 
+            progress(current_progress, desc=f"Transcribing: {int(s.end)}s / {int(total_duration)}s")
+
         del whisper
         clear_memory()
 
-        # Step 3: Scoring
-        progress(0.7, desc="Step 3: Finding Viral Moments")
+        #Scoring Viral Moments
+        progress(0.75, desc="Analyzing content for viral hooks...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         classifier = pipeline("zero-shot-classification", model=Config.CLASSIFIER_MODEL, device=-1)
         
@@ -136,15 +161,18 @@ def process_media(file_path, progress=gr.Progress()):
                     cand['idx'] = i
                     selected.append(cand)
 
-        # Step 4: Exporting
-        progress(0.9, desc="Step 4: Finalizing Clips...")
+        #Exporting (Heavy step for video)
+        progress(0.9, desc="Cutting and exporting viral clips...")
         clips = []
         
         if is_video:
             video_full = VideoFileClip(file_path)
             for i, hook in enumerate(selected):
                 path = session_dir / f"clip_{i+1}.mp4"
-                video_full.subclip(hook['start'], hook['end']).write_videofile(str(path), codec="libx264", audio_codec="aac", logger=None)
+                video_full.subclip(hook['start'], hook['end']).write_videofile(
+                    str(path), codec="libx264", audio_codec="aac", temp_audiofile=str(session_dir/"temp.m4a"), 
+                    remove_temp=True, logger=None
+                )
                 clips.append(str(path))
             video_full.close()
         else:
@@ -160,8 +188,8 @@ def process_media(file_path, progress=gr.Progress()):
         
         del embedder, classifier
         clear_memory()
-        return full_transcript, f"✅ Clips Ready!", *clips, str(session_dir)
+        return full_transcript, f"Processing Complete!", *clips, str(session_dir)
 
     except Exception as e:
         logger.error(f"Critical System Error: {e}")
-        return str(e), "❌ Processing Error", None, None, None, None, ""
+        return str(e), "Error during processing", None, None, None, None, ""
