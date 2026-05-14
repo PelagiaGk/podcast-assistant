@@ -12,9 +12,12 @@ from pydub.effects import normalize
 from transformers import pipeline
 from pyannote.audio import Pipeline as DiarizationPipeline
 from sentence_transformers import SentenceTransformer, util
-from moviepy.editor import VideoFileClip # New dependency
 from config import Config
 import gradio as gr
+try:
+    from moviepy.editor import VideoFileClip
+except ImportError:
+    from moviepy.video.io.VideoFileClip import VideoFileClip
 
 logger = logging.getLogger(__name__)
 
