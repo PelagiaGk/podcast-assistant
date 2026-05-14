@@ -40,7 +40,7 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
             run_btn = gr.Button("Process Media", variant="primary")
             
         with gr.Column(scale=2):
-            transcript = gr.Textbox(label="Transcript", lines=14)
+            transcript = gr.Textbox(label="Transcript", lines=10)
 
     with gr.Row():
         status = gr.Textbox(label="Status", placeholder="Waiting for upload")
