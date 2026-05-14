@@ -23,17 +23,17 @@ with gr.Blocks(theme=gr.Theme.from_hub("theme-repo/STONE_Theme")) as demo:
         with gr.Column(scale=1):
             audio_in = gr.Audio(label="Upload Audio", type="filepath")
             run_btn = gr.Button("Process Audio", variant="primary")
-            status = gr.Textbox(label="Status", interactive=False)
+            status = gr.Textbox(label="Status", placeholder="Waiting for upload")
             done_btn = gr.Button("Done", variant="stop")
             
         with gr.Column(scale=2):
-            transcript = gr.Textbox(label="Transcript", lines=12, interactive=False)
+            transcript = gr.Textbox(label="Transcript", lines=12)
 
     gr.Markdown("Selected Viral Hooks")
     with gr.Row():
-        c1 = gr.Audio(label="Hook 1", interactive=False)
-        c2 = gr.Audio(label="Hook 2", interactive=False)
-        c3 = gr.Audio(label="Hook 3", interactive=False)
+        c1 = gr.Audio(label="Clip 1")
+        c2 = gr.Audio(label="Clip 2")
+        c3 = gr.Audio(label="Clip 3")
 
     run_btn.click(
         process_audio, 
@@ -82,7 +82,7 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
             done_btn = gr.Button("Done", variant="stop")
             
         with gr.Column(scale=2):
-            transcript = gr.Textbox(label="Transcript", lines=12, interactive=False)
+            transcript = gr.Textbox(label="Transcript", lines=12)
 
     gr.Markdown("Selected Viral Hooks")
     with gr.Row():
