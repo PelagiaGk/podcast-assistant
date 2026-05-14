@@ -54,7 +54,7 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
         inputs=session_state,
         outputs=[transcript, status, c1, c2, c3, audio_in, session_state]
     )
-    demo.unload(fn=cleanup_session)
+    demo.unload(fn=cleanup_session, inputs=session_state)
 
 if __name__ == "__main__":
     #Validate Secrets
@@ -71,4 +71,4 @@ if __name__ == "__main__":
         shutil.rmtree(old_session, ignore_errors=True)
         
     #Launch with max protection against schema bugs
-    demo.queue(max_size=3).launch(show_api=False)
+    demo.queue(max_size=3).launch(show_api=False, server_name="0.0.0.0")
