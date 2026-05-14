@@ -4,3 +4,8 @@ faster-whisper
 pyannote.audio
 huggingface-hub==0.25.2
 python-dotenv
+librosa
+pydub
+transformers
+sentence-transformers
+numpy
