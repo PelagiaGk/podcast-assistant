@@ -23,21 +23,20 @@ function() {
 with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as demo:
     session_state = gr.State("")
     
-    gr.Markdown("# Podcast Assistant - Viral Clips Extractor")
+    gr.Markdown("Podcast Assistant - Viral Clips Extractor")
     gr.Markdown("Upload audio to extract engaging moments. **Privacy Note:** Files are deleted when you click 'Done' or close the tab.")
     
     with gr.Row():
         with gr.Column(scale=1):
             audio_in = gr.Audio(label="Upload Audio", type="filepath")
             run_btn = gr.Button("Process Audio", variant="primary")
-            # Removed 'interactive=False' to bypass the boolean iterable bug
             status = gr.Textbox(label="Status", placeholder="Waiting for upload")
             done_btn = gr.Button("Done", variant="stop")
             
         with gr.Column(scale=2):
             transcript = gr.Textbox(label="Transcript", lines=12)
 
-    gr.Markdown("### Selected Viral Hooks")
+    gr.Markdown("Selected Viral Clips")
     with gr.Row():
         c1 = gr.Audio(label="Clip 1")
         c2 = gr.Audio(label="Clip 2")
@@ -55,7 +54,7 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
         inputs=session_state,
         outputs=[transcript, status, c1, c2, c3, audio_in, session_state]
     )
-    demo.unload(cleanup_session)
+    demo.unload(fn=cleanup_session)
 
 if __name__ == "__main__":
     #Validate Secrets
