@@ -86,9 +86,9 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
 
     gr.Markdown("Selected Viral Hooks")
     with gr.Row():
-        c1 = gr.Audio(label="Hook 1", interactive=False)
-        c2 = gr.Audio(label="Hook 2", interactive=False)
-        c3 = gr.Audio(label="Hook 3", interactive=False)
+        c1 = gr.Audio(label="Clip 1")
+        c2 = gr.Audio(label="Clip 2")
+        c3 = gr.Audio(label="Clip 3")
 
     run_btn.click(
         process_audio, 
