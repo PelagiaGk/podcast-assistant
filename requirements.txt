@@ -1,5 +1,6 @@
-torchaudio==2.0.2
-huggingface_hub==0.23.2
+torchaudio
+huggingface-hub>=0.25.0
+pydantic>=2.0
 numpy<2.0.0
 librosa
 pydub
@@ -9,3 +10,6 @@ faster-whisper
 pyannote.audio
 sentence-transformers
 python-dotenv
+
+
+
