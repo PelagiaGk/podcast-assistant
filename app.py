@@ -6,9 +6,11 @@ from pathlib import Path
 from config import Config
 from logic import process_audio, cleanup_session
 
+#Configure logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# JavaScript for Browser Warning 
+#JavaScript for Warning 
 warning_js = """
 function() {
     window.onbeforeunload = function() {
@@ -17,16 +19,18 @@ function() {
 }
 """
 
+#UI Interface
 with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as demo:
     session_state = gr.State("")
     
     gr.Markdown("# Podcast Assistant - Viral Clips Extractor")
-    gr.Markdown("Upload audio to extract engaging moments. **Note:** Files are deleted when you click 'Done' or close the tab.")
+    gr.Markdown("Upload audio to extract engaging moments. **Privacy Note:** Files are deleted when you click 'Done' or close the tab.")
     
     with gr.Row():
         with gr.Column(scale=1):
             audio_in = gr.Audio(label="Upload Audio", type="filepath")
             run_btn = gr.Button("Process Audio", variant="primary")
+            # Removed 'interactive=False' to bypass the boolean iterable bug
             status = gr.Textbox(label="Status", placeholder="Waiting for upload")
             done_btn = gr.Button("Done", variant="stop")
             
@@ -39,6 +43,7 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
         c2 = gr.Audio(label="Clip 2")
         c3 = gr.Audio(label="Clip 3")
 
+    #Event Listeners
     run_btn.click(
         process_audio, 
         inputs=audio_in, 
@@ -50,11 +55,10 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
         inputs=session_state,
         outputs=[transcript, status, c1, c2, c3, audio_in, session_state]
     )
-
-    # Corrected: unload cannot take inputs in this Gradio version
     demo.unload(cleanup_session)
 
 if __name__ == "__main__":
+    #Validate Secrets
     try:
         Config.validate_env()
     except Exception as e:
@@ -62,10 +66,10 @@ if __name__ == "__main__":
         import sys
         sys.exit(1)
 
-    # Pre-launch cleanup
+    #Pre-launch temp cleanup
     temp_path = Path(tempfile.gettempdir())
     for old_session in temp_path.glob("session_*"):
         shutil.rmtree(old_session, ignore_errors=True)
         
-    # Launch with API docs disabled to bypass the schema bug
+    #Launch with max protection against schema bugs
     demo.queue(max_size=3).launch(show_api=False)
