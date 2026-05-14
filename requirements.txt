@@ -8,4 +8,3 @@ librosa
 pydub
 transformers
 sentence-transformers
-numpy
