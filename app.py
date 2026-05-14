@@ -32,7 +32,7 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
             run_btn = gr.Button("Process Audio", variant="primary")
             
         with gr.Column(scale=2):
-            transcript = gr.Textbox(label="Transcript", lines=13)
+            transcript = gr.Textbox(label="Transcript", lines=14)
     with gr.Row():
         status = gr.Textbox(label="Status", placeholder="Waiting for upload")
 
