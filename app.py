@@ -28,7 +28,7 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
     session_state = gr.State("")
     
     gr.Markdown("# Podcast Assistant - Viral Clips Extractor")
-    gr.Markdown("# Upload **audio** or **video** to extract engaging moments. **Privacy Note:** Files are deleted when you click 'Done' or close the tab.")
+    gr.Markdown("Upload **audio** or **video** to extract engaging moments. **Privacy Note:** Files are deleted when you click 'Done' or close the tab.")
     
     with gr.Row():
         with gr.Column(scale=1):
