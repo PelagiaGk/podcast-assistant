@@ -30,6 +30,7 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
         with gr.Column(scale=1):
             audio_in = gr.Audio(label="Upload Audio", type="filepath")
             run_btn = gr.Button("Process Audio", variant="primary")
+            status = gr.Textbox(placeholder="Waiting for upload")
             
         with gr.Column(scale=2):
             transcript = gr.Textbox(label="Transcript", lines=12)
@@ -41,6 +42,7 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
         c3 = gr.Audio(label="Clip 3")
     with gr.Row():
         done_btn = gr.Button("Done", variant="stop")
+        
     #Event Listeners
     run_btn.click(
         process_audio, 
