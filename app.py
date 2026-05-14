@@ -27,8 +27,8 @@ def reset_ui():
 with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as demo:
     session_state = gr.State("")
     
-    gr.Markdown("# Podcast & Video Assistant - Viral Clips Extractor")
-    gr.Markdown("Upload **audio** or **video** to extract engaging moments. **Privacy Note:** Files are deleted when you click 'Done' or close the tab.")
+    gr.Markdown("# Podcast Assistant - Viral Clips Extractor")
+    gr.Markdown("# Upload **audio** or **video** to extract engaging moments. **Privacy Note:** Files are deleted when you click 'Done' or close the tab.")
     
     with gr.Row():
         with gr.Column(scale=1):
@@ -40,7 +40,7 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(60, 60)) as 
             run_btn = gr.Button("Process Media", variant="primary")
             
         with gr.Column(scale=2):
-            transcript = gr.Textbox(label="Transcript", lines=10)
+            transcript = gr.Textbox(label="Transcript", lines=12)
 
     with gr.Row():
         status = gr.Textbox(label="Status", placeholder="Waiting for upload")
