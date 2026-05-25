@@ -87,4 +87,4 @@ if __name__ == "__main__":
         shutil.rmtree(old_session, ignore_errors=True)
         
     #Launch
-    demo.queue(max_size=3).launch(show_api=False, server_name="0.0.0.0")
+    demo.queue(max_size=3).launch(server_name="0.0.0.0")
