@@ -190,7 +190,6 @@ def process_media(file_path, progress=gr.Progress()):
             try:
                 audio = AudioSegment.from_file(file_path)
             except Exception as format_err:
-                logger.warning(f"Pydub direct read failed ({format_err}). Attempting MoviePy extraction fallback...")
                 from moviepy.editor import AudioFileClip
                 temp_wav = session_dir / "fallback_decode.wav"
                 audio_clip = AudioFileClip(file_path)
