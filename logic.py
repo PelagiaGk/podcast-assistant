@@ -9,6 +9,14 @@ from pathlib import Path
 from faster_whisper import WhisperModel
 from pydub import AudioSegment
 from pydub.effects import normalize
+import shutil
+ffmpeg_path = shutil.which("ffmpeg")
+ffprobe_path = shutil.which("ffprobe")
+if ffmpeg_path:
+    AudioSegment.converter = ffmpeg_path
+if ffprobe_path:
+    AudioSegment.ffprobe = ffprobe_path
+
 from transformers import pipeline
 from pyannote.audio import Pipeline as DiarizationPipeline
 from sentence_transformers import SentenceTransformer, util
@@ -185,18 +193,26 @@ def process_media(file_path, progress=gr.Progress()):
                 clips.append(str(path))
             video_full.close()
         else:
-            #Fallback wrapper for raw compressed files (m4a, aac, etc.)
-            #If it's an m4a/mp4 container, pass it through moviepy or read it directly safely
+            #Safe audio decoding block using WAV as the intermediate bridge
             try:
                 audio = AudioSegment.from_file(file_path)
             except Exception as format_err:
                 from moviepy.editor import AudioFileClip
-                temp_wav = session_dir / "fallback_decode.wav"
+                #Convert directly to an uncompressed standard WAV file
+                temp_wav = str(session_dir / "codespace_fallback.wav")
                 audio_clip = AudioFileClip(file_path)
-                audio_clip.write_audiofile(str(temp_wav), fps=16000, nbytes=2, ffmpeg_params=["-ac", "1"], logger=None)
+                audio_clip.write_audiofile(
+                    temp_wav, 
+                    fps=16000, 
+                    nbytes=2, 
+                    codec="pcm_s16le",
+                    ffmpeg_params=["-ac", "1"], 
+                    logger=None
+                )
                 audio_clip.close()
-                #Load the newly exported clean wav file
-                audio = AudioSegment.from_file(str(temp_wav))
+                
+                #Load the raw WAV file safely
+                audio = AudioSegment.from_file(temp_wav)
 
             normalized_audio = normalize(audio)
             for i, hook in enumerate(selected):
