@@ -96,31 +96,50 @@ def process_media(file_path, progress=gr.Progress()):
     session_dir = Path(tempfile.gettempdir()) / f"session_{session_id}"
     session_dir.mkdir(parents=True, exist_ok=True)
     
-    is_video = file_path.lower().endswith(('.mp4', '.mkv', '.mov', '.avi', '.webm'))
-    processing_path = file_path
+    file_ext = file_path.lower()
+    is_video = file_ext.endswith(('.mp4', '.mkv', '.mov', '.avi', '.webm'))
+    is_compressed_audio = file_ext.endswith(('.m4a', '.aac', '.mp3', '.flac', '.ogg'))
+    
+    #Force everything into a standardized, raw WAV file right at the start
+    processing_path = str(session_dir / "standardized_input.wav")
 
     try:
-        #Video to Audio extraction
         if is_video:
-            progress(0.05, desc="Extracting audio...")
+            progress(0.05, desc="Extracting audio from video (Normalizing to WAV)...")
             video = VideoFileClip(file_path)
-            processing_path = str(session_dir / "extracted_audio.wav")
             video.audio.write_audiofile(
                 processing_path, 
                 fps=16000, 
                 nbytes=2, 
-                buffersize=2000, 
+                codec="pcm_s16le", 
                 ffmpeg_params=["-ac", "1"], 
                 logger=None
             )
             video.close()
             clear_memory()
+            
+        elif is_compressed_audio:
+            progress(0.05, desc="Normalizing compressed audio container to raw WAV...")
+            from moviepy.editor import AudioFileClip
+            audio_clip = AudioFileClip(file_path)
+            audio_clip.write_audiofile(
+                processing_path, 
+                fps=16000, 
+                nbytes=2, 
+                codec="pcm_s16le", 
+                ffmpeg_params=["-ac", "1"], 
+                logger=None
+            )
+            audio_clip.close()
+            clear_memory()
+            
+        else:
+            #If it's already a WAV, just point to it directly
+            processing_path = file_path
 
-        #Diarization
         progress(0.1, desc="Identifying Speakers...")
         diar_pipe = DiarizationPipeline.from_pretrained(Config.DIARIZATION_MODEL, use_auth_token=Config.HF_TOKEN)
         
-        #Guard clause for pipeline environment allocation maps
         if hasattr(diar_pipe, "to") and torch.cuda.is_available():
             diar_pipe.to(torch.device(Config.DEVICE))
             
@@ -153,11 +172,10 @@ def process_media(file_path, progress=gr.Progress()):
         if not processed_segs:
             return "No text transcribed from the audio.", "Processing complete (Empty text)", None, None, None, None, str(session_dir)
 
-        #Scoring Viral Moments
-        progress(0.75, desc="Analyzing content for viral clips...")
+        #Scoring Viral Clips
+        progress(0.75, desc="Analyzing content for viral hooks...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         
-        #Changed device maps to explicitly inherit configuration profiles safely
         classifier_device = 0 if Config.DEVICE == "cuda" else -1
         classifier = pipeline("zero-shot-classification", model=Config.CLASSIFIER_MODEL, device=classifier_device)
         
@@ -187,61 +205,32 @@ def process_media(file_path, progress=gr.Progress()):
                     cand['idx'] = i
                     selected.append(cand)
 
-        #Exporting Clips
+        #Exporting
         progress(0.9, desc="Cutting and exporting viral clips...")
         clips = []
         
-        if is_video:
-            video_full = VideoFileClip(file_path)
-            for i, hook in enumerate(selected):
-                path = session_dir / f"clip_{i+1}.mp4"
-                video_full.subclip(hook['start'], hook['end']).write_videofile(
-                    str(path), codec="libx264", audio_codec="aac", temp_audiofile=str(session_dir/"temp.m4a"), 
-                    remove_temp=True, logger=None
-                )
-                clips.append(str(path))
-            video_full.close()
-        else:
-            #Use MoviePy to read and slice, Pydub writes the final MP3
-            logger.info("Using MoviePy native audio slicing to bypass Pydub format restrictions.")
-            from moviepy.editor import AudioFileClip
+        from moviepy.editor import AudioFileClip, VideoFileClip
+        
+        master_clip = VideoFileClip(file_path) if is_video else AudioFileClip(file_path)
+        
+        for i, hook in enumerate(selected):
+            ext = "mp4" if is_video else "mp3"
+            path = session_dir / f"clip_{i+1}.{ext}"
+            sub_clip = master_clip.subclip(hook['start'], hook['end'])
             
-            try:
-                #Load the audio file via MoviePy 
-                audio_clip = AudioFileClip(file_path)
-                
-                for i, hook in enumerate(selected):
-                    path = session_dir / f"hook_{i+1}.mp3"
-                    
-                    #Slice the audio clip natively using MoviePy
-                    sub_clip = audio_clip.subclip(hook['start'], hook['end'])
-                    
-                    #Write it directly out as an MP3
-                    sub_clip.write_audiofile(
-                        str(path),
-                        fps=44100,
-                        nbytes=2,
-                        codec="libmp3lame", 
-                        logger=None
-                    )
-                    sub_clip.close()
-                audio_clip.close()
-                
-            except Exception as moviepy_err:
-                logger.error(f"MoviePy slicing failed: {moviepy_err}. Attempting final absolute safety fallback.")
-                
-                #Emergency Fallback: If even MoviePy struggles, use standard pydub only if the file was successfully transcoded to a raw WAV file earlier
-                audio = AudioSegment.from_file(file_path)
-                normalized_audio = normalize(audio)
-                for i, hook in enumerate(selected):
-                    path = session_dir / f"hook_{i+1}.mp3"
-                    normalized_audio[int(hook['start']*1000):int(hook['end']*1000)].fade_in(200).fade_out(200).export(str(path), format="mp3")
-                
-            #Populate clips array safely
-            for i in range(len(selected)):
-                path = session_dir / f"hook_{i+1}.mp3"
-                if os.path.exists(path):
-                    clips.append(str(path))
+            if is_video:
+                sub_clip.write_videofile(
+                    str(path), codec="libx264", audio_codec="aac", 
+                    temp_audiofile=str(session_dir/"temp.m4a"), remove_temp=True, logger=None
+                )
+            else:
+                sub_clip.write_audiofile(
+                    str(path), fps=44100, nbytes=2, codec="libmp3lame", logger=None
+                )
+            sub_clip.close()
+            clips.append(str(path))
+            
+        master_clip.close()
 
         while len(clips) < 3: clips.append(None)
         full_transcript = "\n".join([f"[{s['speaker']}] {s['text']}" for s in processed_segs])
