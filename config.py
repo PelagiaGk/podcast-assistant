@@ -16,8 +16,8 @@ class Config:
     WHISPER_MODEL = "base" 
     CLASSIFIER_MODEL = "valhalla/distilbart-mnli-12-1" 
     EMBEDDER_MODEL = "all-MiniLM-L6-v2"
-    DIARIZATION_MODEL = "pyannote/speaker-diarization-3.1"      
-    
+    DIARIZATION_MODEL = "pyannote/speaker-diarization@2.1"
+
     MAX_FILE_SIZE_MB = 500
     MAX_CLIP_DURATION = 120
     MIN_WORDS_FOR_HOOK = 30 
