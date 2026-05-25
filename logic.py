@@ -13,7 +13,6 @@ from config import Config
 import gradio as gr
 import numpy as np
 
-# Cross-compatibility mapping for MoviePy v1.x and v2.x namespaces
 try:
     from moviepy import VideoFileClip, AudioFileClip
 except ImportError:
@@ -22,6 +21,15 @@ except ImportError:
     except ImportError:
         from moviepy.video.io.VideoFileClip import VideoFileClip
         from moviepy.audio.io.AudioFileClip import AudioFileClip
+
+def safe_slice(clip, start_time, end_time):
+    """Safely slices a MoviePy clip across both version 1.x and version 2.x signatures."""
+    if hasattr(clip, "subcut"):
+        return clip.subcut(start_time, end_time)  #Modern MoviePy v2.x
+    elif hasattr(clip, "subclip"):
+        return clip.subclip(start_time, end_time)  #Legacy MoviePy v1.x
+    else:
+        raise AttributeError("The loaded MoviePy clip structure does not support cutting via subclip or subcut.")
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +48,7 @@ def cleanup_session(session_path=None):
 
 def get_intersection_speaker(seg_start, seg_end, speaker_turns):
     if not speaker_turns:
-        return "Speaker 1" # Default fallback placeholder if VAD/Diarization is empty
+        return "Speaker 1" #Default fallback placeholder if Diarization is empty
     best_speaker = "Unknown"
     max_overlap = 0
     for turn in speaker_turns:
@@ -88,7 +96,6 @@ def process_media(file_path, progress=gr.Progress()):
     master_clip = None
 
     try:
-        # --- UNIVERSAL INGESTION LAYER ---
         if is_video:
             progress(0.05, desc="Extracting audio from video...")
             master_clip = VideoFileClip(file_path)
@@ -119,19 +126,16 @@ def process_media(file_path, progress=gr.Progress()):
             processing_path = file_path
             master_clip = AudioFileClip(file_path)
 
-        # --- TRANSCRIPTION & NATIVE SPEAKER TRACKING ---
-        progress(0.2, desc="Starting Transcription & VAD Tracking...")
+        #Transcription and speaker navigation
+        progress(0.2, desc="Starting Transcription...")
         whisper = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
         segments_gen, info = whisper.transcribe(processing_path, vad_filter=True)
         
         processed_segs = []
         speaker_turns = []
         total_duration = info.duration if info.duration else 1.0
-        
-        # We leverage faster-whisper's stable internal VAD segments directly 
-        # to cleanly populate structural speaker tracking timelines.
+
         for s in segments_gen:
-            # Build speaker sequence mapping out of VAD tracking intervals
             speaker_label = f"Speaker {1 if len(speaker_turns) % 2 == 0 else 2}"
             speaker_turns.append({'start': s.start, 'end': s.end, 'speaker': speaker_label})
             
@@ -151,7 +155,7 @@ def process_media(file_path, progress=gr.Progress()):
             if master_clip: master_clip.close()
             return "No text transcribed from the audio.", "Processing complete (Empty text)", None, None, None, None, str(session_dir)
 
-        # --- SCORING VIRAL MOMENTS ---
+        #Viral Clips
         progress(0.75, desc="Analyzing content for viral clips...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         
@@ -184,14 +188,15 @@ def process_media(file_path, progress=gr.Progress()):
                     cand['idx'] = i
                     selected.append(cand)
 
-        # --- EXPORTPhase ---
+        #Export
         progress(0.9, desc="Cutting and exporting viral clips...")
         clips = []
         
         for i, hook in enumerate(selected):
             ext = "mp4" if is_video else "mp3"
             path = session_dir / f"clip_{i+1}.{ext}"
-            sub_clip = master_clip.subclip(hook['start'], hook['end'])
+            
+            sub_clip = safe_slice(master_clip, hook['start'], hook['end'])
             
             if is_video:
                 sub_clip.write_videofile(
@@ -204,16 +209,6 @@ def process_media(file_path, progress=gr.Progress()):
                 )
             sub_clip.close()
             clips.append(str(path))
-            
-        if master_clip: 
-            master_clip.close()
-
-        while len(clips) < 3: clips.append(None)
-        full_transcript = "\n".join([f"[{s['speaker']}] {s['text']}" for s in processed_segs])
-        
-        del embedder, classifier
-        clear_memory()
-        return full_transcript, f"Processing Complete!", *clips, str(session_dir)
 
     except Exception as e:
         if master_clip: 

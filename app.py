@@ -43,9 +43,6 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600))
         with gr.Column(scale=2):
             transcript = gr.Textbox(label="Transcript", lines=12)
 
-    with gr.Row():
-        status = gr.Textbox(label="Status", placeholder="Waiting for upload")
-
     gr.Markdown("### Selected Viral Clips")
     with gr.Row():
         c1 = gr.File(label="Clip 1")
@@ -58,7 +55,7 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600))
     run_btn.click(
         fn=process_media, 
         inputs=media_in, 
-        outputs=[transcript, status, c1, c2, c3, session_state, session_state]
+        outputs=[transcript, c1, c2, c3, session_state, session_state]
     )
     
     #Deletes files then clears the UI
@@ -67,7 +64,7 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600))
         inputs=session_state
     ).then(
         fn=reset_ui,
-        outputs=[transcript, status, c1, c2, c3, media_in, session_state]
+        outputs=[transcript, c1, c2, c3, media_in, session_state]
     )
 
     demo.unload(fn=cleanup_session)
