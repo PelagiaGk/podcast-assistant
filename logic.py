@@ -16,9 +16,13 @@ from config import Config
 import gradio as gr
 
 try:
-    from moviepy.editor import VideoFileClip
+    from moviepy import VideoFileClip, AudioFileClip
 except ImportError:
-    from moviepy.video.io.VideoFileClip import VideoFileClip
+    try:
+        from moviepy.editor import VideoFileClip, AudioFileClip
+    except ImportError:
+        from moviepy.video.io.VideoFileClip import VideoFileClip
+        from moviepy.audio.io.AudioFileClip import AudioFileClip
 
 #Logging initialization to catch terminal errors
 logging.basicConfig(level=logging.INFO)
@@ -208,8 +212,6 @@ def process_media(file_path, progress=gr.Progress()):
         #Exporting
         progress(0.9, desc="Cutting and exporting viral clips...")
         clips = []
-        
-        from moviepy.editor import AudioFileClip, VideoFileClip
         
         master_clip = VideoFileClip(file_path) if is_video else AudioFileClip(file_path)
         
