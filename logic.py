@@ -9,14 +9,6 @@ from pathlib import Path
 from faster_whisper import WhisperModel
 from pydub import AudioSegment
 from pydub.effects import normalize
-import shutil
-ffmpeg_path = shutil.which("ffmpeg")
-ffprobe_path = shutil.which("ffprobe")
-if ffmpeg_path:
-    AudioSegment.converter = ffmpeg_path
-if ffprobe_path:
-    AudioSegment.ffprobe = ffprobe_path
-
 from transformers import pipeline
 from pyannote.audio import Pipeline as DiarizationPipeline
 from sentence_transformers import SentenceTransformer, util
@@ -31,6 +23,23 @@ except ImportError:
 #Logging initialization to catch terminal errors
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+try:
+    #Extract the absolute path to the bundled ffmpeg binary
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    AudioSegment.converter = ffmpeg_exe
+    
+    #Deriving ffprobe from the same bundled directory location
+    bin_dir = os.path.dirname(ffmpeg_exe)
+    ffprobe_name = "ffprobe.exe" if sys.platform == "win32" else "ffprobe"
+    ffprobe_exe = os.path.join(bin_dir, ffprobe_name)
+    
+    if os.path.exists(ffprobe_exe):
+        AudioSegment.ffprobe = ffprobe_exe
+        logger.info(f"Pydub successfully bound to static binaries: {ffmpeg_exe}")
+    else:
+        logger.warning("Bundled FFmpeg found, but FFprobe binary was missing in the directory.")
+except Exception as e:
+    logger.error(f"Failed to bind static imageio-ffmpeg binaries: {e}")
 
 def clear_memory():
     gc.collect()
