@@ -185,7 +185,20 @@ def process_media(file_path, progress=gr.Progress()):
                 clips.append(str(path))
             video_full.close()
         else:
-            audio = AudioSegment.from_file(file_path)
+            #Fallback wrapper for raw compressed files (m4a, aac, etc.)
+            #If it's an m4a/mp4 container, pass it through moviepy or read it directly safely
+            try:
+                audio = AudioSegment.from_file(file_path)
+            except Exception as format_err:
+                logger.warning(f"Pydub direct read failed ({format_err}). Attempting MoviePy extraction fallback...")
+                from moviepy.editor import AudioFileClip
+                temp_wav = session_dir / "fallback_decode.wav"
+                audio_clip = AudioFileClip(file_path)
+                audio_clip.write_audiofile(str(temp_wav), fps=16000, nbytes=2, ffmpeg_params=["-ac", "1"], logger=None)
+                audio_clip.close()
+                #Load the newly exported clean wav file
+                audio = AudioSegment.from_file(str(temp_wav))
+
             normalized_audio = normalize(audio)
             for i, hook in enumerate(selected):
                 path = session_dir / f"hook_{i+1}.mp3"
