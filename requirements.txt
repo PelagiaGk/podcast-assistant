@@ -14,7 +14,7 @@ sentence-transformers
 librosa
 pydub
 python-magic
-pyannote-whisper --no-deps
+pyannote-whisper 
 
 
 
