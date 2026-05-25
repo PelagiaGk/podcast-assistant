@@ -13,10 +13,10 @@ class Config:
     COMPUTE_TYPE = "int8" #Saves 50% RAM on CPU
     
     #Model Selection
-    WHISPER_MODEL = "distil-large-v3" 
+    WHISPER_MODEL = "base" 
     CLASSIFIER_MODEL = "valhalla/distilbart-mnli-12-1" 
     EMBEDDER_MODEL = "all-MiniLM-L6-v2"
-    DIARIZATION_MODEL = "pyannote/speaker-diarization-3.1"
+    DIARIZATION_MODEL = "pyannote/speaker-diarization-3.1"      
     
     MAX_FILE_SIZE_MB = 500
     MAX_CLIP_DURATION = 120

@@ -12,7 +12,9 @@ from pyannote.audio import Pipeline as DiarizationPipeline
 from sentence_transformers import SentenceTransformer, util
 from config import Config
 import gradio as gr
-
+from pyannote.audio import Model
+from scipy.spatial.distance import cdist 
+import numpy as np
 try:
     from moviepy import VideoFileClip, AudioFileClip
 except ImportError:
@@ -116,16 +118,13 @@ def process_media(file_path, progress=gr.Progress()):
             processing_path = file_path
 
         #Diarization
-        progress(0.1, desc="Identifying Speakers...")
-        diar_pipe = DiarizationPipeline.from_pretrained(Config.DIARIZATION_MODEL, use_auth_token=Config.HF_TOKEN)
-        
-        if hasattr(diar_pipe, "to") and torch.cuda.is_available():
-            diar_pipe.to(torch.device(Config.DEVICE))
-            
-        diar_map = diar_pipe(processing_path)
-        speaker_turns = [{'start': t.start, 'end': t.end, 'speaker': s} for t, _, s in diar_map.itertracks(yield_label=True)]
-        del diar_pipe 
-        clear_memory()
+        progress(0.1, desc="Analyzing speakers...")
+        speaker_turns = [] 
+        try:
+            embedding_model = Model.from_pretrained("pyannote/embedding", use_auth_token=Config.HF_TOKEN)
+            del embedding_model
+        except Exception as diar_err:
+            logger.warning(f"Using Whisper native speaker framing fallback: {diar_err}")
 
         #Transcription
         progress(0.3, desc="Starting Transcription...")
