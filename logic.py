@@ -7,8 +7,6 @@ import shutil
 import tempfile
 from pathlib import Path
 from faster_whisper import WhisperModel
-from pydub import AudioSegment
-from pydub.effects import normalize
 from transformers import pipeline
 from pyannote.audio import Pipeline as DiarizationPipeline
 from sentence_transformers import SentenceTransformer, util
@@ -24,26 +22,7 @@ except ImportError:
         from moviepy.video.io.VideoFileClip import VideoFileClip
         from moviepy.audio.io.AudioFileClip import AudioFileClip
 
-#Logging initialization to catch terminal errors
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-try:
-    #Extract the absolute path to the bundled ffmpeg binary
-    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-    AudioSegment.converter = ffmpeg_exe
-    
-    #Deriving ffprobe from the same bundled directory location
-    bin_dir = os.path.dirname(ffmpeg_exe)
-    ffprobe_name = "ffprobe.exe" if sys.platform == "win32" else "ffprobe"
-    ffprobe_exe = os.path.join(bin_dir, ffprobe_name)
-    
-    if os.path.exists(ffprobe_exe):
-        AudioSegment.ffprobe = ffprobe_exe
-        logger.info(f"Pydub successfully bound to static binaries: {ffmpeg_exe}")
-    else:
-        logger.warning("Bundled FFmpeg found, but FFprobe binary was missing in the directory.")
-except Exception as e:
-    logger.error(f"Failed to bind static imageio-ffmpeg binaries: {e}")
 
 def clear_memory():
     gc.collect()
@@ -54,10 +33,8 @@ def cleanup_session(session_path=None):
     if session_path and os.path.exists(session_path):
         try:
             shutil.rmtree(session_path)
-            logger.info(f"Cleaned up session path: {session_path}")
         except Exception as e:
             logger.error(f"Error deleting session: {e}")
-
     clear_memory()
 
 def get_intersection_speaker(seg_start, seg_end, speaker_turns):
@@ -104,12 +81,11 @@ def process_media(file_path, progress=gr.Progress()):
     is_video = file_ext.endswith(('.mp4', '.mkv', '.mov', '.avi', '.webm'))
     is_compressed_audio = file_ext.endswith(('.m4a', '.aac', '.mp3', '.flac', '.ogg'))
     
-    #Force everything into a standardized, raw WAV file right at the start
     processing_path = str(session_dir / "standardized_input.wav")
 
     try:
         if is_video:
-            progress(0.05, desc="Extracting audio from video (Normalizing to WAV)...")
+            progress(0.05, desc="Extracting audio from video...")
             video = VideoFileClip(file_path)
             video.audio.write_audiofile(
                 processing_path, 
@@ -123,8 +99,7 @@ def process_media(file_path, progress=gr.Progress()):
             clear_memory()
             
         elif is_compressed_audio:
-            progress(0.05, desc="Normalizing compressed audio container to raw WAV...")
-            from moviepy.editor import AudioFileClip
+            progress(0.05, desc="Normalizing compressed audio container...")
             audio_clip = AudioFileClip(file_path)
             audio_clip.write_audiofile(
                 processing_path, 
@@ -138,9 +113,9 @@ def process_media(file_path, progress=gr.Progress()):
             clear_memory()
             
         else:
-            #If it's already a WAV, just point to it directly
             processing_path = file_path
 
+        #Diarization
         progress(0.1, desc="Identifying Speakers...")
         diar_pipe = DiarizationPipeline.from_pretrained(Config.DIARIZATION_MODEL, use_auth_token=Config.HF_TOKEN)
         
@@ -176,8 +151,8 @@ def process_media(file_path, progress=gr.Progress()):
         if not processed_segs:
             return "No text transcribed from the audio.", "Processing complete (Empty text)", None, None, None, None, str(session_dir)
 
-        #Scoring Viral Clips
-        progress(0.75, desc="Analyzing content for viral hooks...")
+        #Scoring Viral Moments
+        progress(0.75, desc="Analyzing content for viral clips...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         
         classifier_device = 0 if Config.DEVICE == "cuda" else -1
@@ -209,7 +184,7 @@ def process_media(file_path, progress=gr.Progress()):
                     cand['idx'] = i
                     selected.append(cand)
 
-        #Exporting
+        #Export
         progress(0.9, desc="Cutting and exporting viral clips...")
         clips = []
         
