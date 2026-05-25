@@ -202,32 +202,46 @@ def process_media(file_path, progress=gr.Progress()):
                 clips.append(str(path))
             video_full.close()
         else:
-            #Safe audio decoding block using WAV as the intermediate bridge
+            #Use MoviePy to read and slice, Pydub writes the final MP3
+            logger.info("Using MoviePy native audio slicing to bypass Pydub format restrictions.")
+            from moviepy.editor import AudioFileClip
+            
             try:
-                audio = AudioSegment.from_file(file_path)
-            except Exception as format_err:
-                from moviepy.editor import AudioFileClip
-                #Convert directly to an uncompressed standard WAV file
-                temp_wav = str(session_dir / "codespace_fallback.wav")
+                #Load the audio file via MoviePy 
                 audio_clip = AudioFileClip(file_path)
-                audio_clip.write_audiofile(
-                    temp_wav, 
-                    fps=16000, 
-                    nbytes=2, 
-                    codec="pcm_s16le",
-                    ffmpeg_params=["-ac", "1"], 
-                    logger=None
-                )
+                
+                for i, hook in enumerate(selected):
+                    path = session_dir / f"hook_{i+1}.mp3"
+                    
+                    #Slice the audio clip natively using MoviePy
+                    sub_clip = audio_clip.subclip(hook['start'], hook['end'])
+                    
+                    #Write it directly out as an MP3
+                    sub_clip.write_audiofile(
+                        str(path),
+                        fps=44100,
+                        nbytes=2,
+                        codec="libmp3lame", 
+                        logger=None
+                    )
+                    sub_clip.close()
                 audio_clip.close()
                 
-                #Load the raw WAV file safely
-                audio = AudioSegment.from_file(temp_wav)
-
-            normalized_audio = normalize(audio)
-            for i, hook in enumerate(selected):
+            except Exception as moviepy_err:
+                logger.error(f"MoviePy slicing failed: {moviepy_err}. Attempting final absolute safety fallback.")
+                
+                #Emergency Fallback: If even MoviePy struggles, use standard pydub only if the file was successfully transcoded to a raw WAV file earlier
+                audio = AudioSegment.from_file(file_path)
+                normalized_audio = normalize(audio)
+                for i, hook in enumerate(selected):
+                    path = session_dir / f"hook_{i+1}.mp3"
+                    normalized_audio[int(hook['start']*1000):int(hook['end']*1000)].fade_in(200).fade_out(200).export(str(path), format="mp3")
+                
+            #Populate clips array safely
+            for i in range(len(selected)):
                 path = session_dir / f"hook_{i+1}.mp3"
-                normalized_audio[int(hook['start']*1000):int(hook['end']*1000)].fade_in(200).fade_out(200).export(str(path), format="mp3")
-                clips.append(str(path))
+                if os.path.exists(path):
+                    clips.append(str(path))
 
         while len(clips) < 3: clips.append(None)
         full_transcript = "\n".join([f"[{s['speaker']}] {s['text']}" for s in processed_segs])
