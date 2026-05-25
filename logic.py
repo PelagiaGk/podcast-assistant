@@ -20,6 +20,8 @@ try:
 except ImportError:
     from moviepy.video.io.VideoFileClip import VideoFileClip
 
+# Enhanced logging initialization to catch terminal errors
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def clear_memory():
@@ -31,12 +33,11 @@ def cleanup_session(session_path=None):
     if session_path and os.path.exists(session_path):
         try:
             shutil.rmtree(session_path)
+            logger.info(f"Cleaned up session path: {session_path}")
         except Exception as e:
             logger.error(f"Error deleting session: {e}")
     
-    gradio_tmp = os.path.join(tempfile.gettempdir(), "gradio")
-    if os.path.exists(gradio_tmp):
-        shutil.rmtree(gradio_tmp, ignore_errors=True)
+    # REMOVED: Aggressive wiping of tempfile "gradio" folder which kills uploads mid-process.
     clear_memory()
 
 def get_intersection_speaker(seg_start, seg_end, speaker_turns):
@@ -71,7 +72,9 @@ def get_optimized_scores(windows, embedder, classifier_pipe):
 
 @torch.inference_mode()
 def process_media(file_path, progress=gr.Progress()):
-    if not file_path: return [None]*7
+    if not file_path or not os.path.exists(file_path): 
+        logger.error(f"Provided file path invalid or non-existent: {file_path}")
+        return "Error: File missing.", "File not found on backend", None, None, None, None, ""
     
     session_id = str(uuid.uuid4())
     session_dir = Path(tempfile.gettempdir()) / f"session_{session_id}"
@@ -81,12 +84,11 @@ def process_media(file_path, progress=gr.Progress()):
     processing_path = file_path
 
     try:
-        #Video to Audio extraction (Podcast Optimized)
+        # Video to Audio extraction
         if is_video:
             progress(0.05, desc="Extracting audio (Optimizing for RAM)...")
             video = VideoFileClip(file_path)
             processing_path = str(session_dir / "extracted_audio.wav")
-            #Downsampling to 16kHz Mono for long podcasts
             video.audio.write_audiofile(
                 processing_path, 
                 fps=16000, 
@@ -98,23 +100,26 @@ def process_media(file_path, progress=gr.Progress()):
             video.close()
             clear_memory()
 
-        #Diarization
-        progress(0.1, desc="Identifying Speakers (This may take a while for long files...)")
+        # Diarization
+        progress(0.1, desc="Identifying Speakers...")
         diar_pipe = DiarizationPipeline.from_pretrained(Config.DIARIZATION_MODEL, use_auth_token=Config.HF_TOKEN)
+        
+        # Guard clause for pipeline environment allocation maps
+        if hasattr(diar_pipe, "to") and torch.cuda.is_available():
+            diar_pipe.to(torch.device(Config.DEVICE))
+            
         diar_map = diar_pipe(processing_path)
         speaker_turns = [{'start': t.start, 'end': t.end, 'speaker': s} for t, _, s in diar_map.itertracks(yield_label=True)]
         del diar_pipe 
         clear_memory()
 
-        #Transcription (Iterative for long files)
+        # Transcription
         progress(0.3, desc="Starting Transcription...")
         whisper = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
-        # Using a generator to update progress for long podcasts
         segments_gen, info = whisper.transcribe(processing_path, vad_filter=True)
         
         processed_segs = []
-        #total_duration helps calculate percentage
-        total_duration = info.duration
+        total_duration = info.duration if info.duration else 1.0
         
         for s in segments_gen:
             processed_segs.append({
@@ -123,17 +128,22 @@ def process_media(file_path, progress=gr.Progress()):
                 'end': s.end, 
                 'speaker': get_intersection_speaker(s.start, s.end, speaker_turns)
             })
-            #Update progress bar every segment based on time elapsed
             current_progress = 0.3 + (s.end / total_duration * 0.4) 
-            progress(current_progress, desc=f"Transcribing: {int(s.end)}s / {int(total_duration)}s")
+            progress(min(current_progress, 0.74), desc=f"Transcribing: {int(s.end)}s / {int(total_duration)}s")
 
         del whisper
         clear_memory()
 
-        #Scoring Viral Moments
+        if not processed_segs:
+            return "No text transcribed from the audio.", "Processing complete (Empty text)", None, None, None, None, str(session_dir)
+
+        # Scoring Viral Moments
         progress(0.75, desc="Analyzing content for viral hooks...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
-        classifier = pipeline("zero-shot-classification", model=Config.CLASSIFIER_MODEL, device=-1)
+        
+        # Changed device maps to explicitly inherit configuration profiles safely
+        classifier_device = 0 if Config.DEVICE == "cuda" else -1
+        classifier = pipeline("zero-shot-classification", model=Config.CLASSIFIER_MODEL, device=classifier_device)
         
         windows = []
         for i in range(len(processed_segs)):
@@ -161,7 +171,7 @@ def process_media(file_path, progress=gr.Progress()):
                     cand['idx'] = i
                     selected.append(cand)
 
-        #Exporting (Heavy step for video)
+        # Exporting Clips
         progress(0.9, desc="Cutting and exporting viral clips...")
         clips = []
         
@@ -191,5 +201,5 @@ def process_media(file_path, progress=gr.Progress()):
         return full_transcript, f"Processing Complete!", *clips, str(session_dir)
 
     except Exception as e:
-        logger.error(f"Critical System Error: {e}")
-        return str(e), "Error during processing", None, None, None, None, ""
+        logger.exception("Critical unexpected error caught during processing pipeline execution:")
+        return str(e), f"Error during processing: {str(e)}", None, None, None, None, ""
