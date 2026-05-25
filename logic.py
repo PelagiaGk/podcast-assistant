@@ -20,7 +20,7 @@ try:
 except ImportError:
     from moviepy.video.io.VideoFileClip import VideoFileClip
 
-# Enhanced logging initialization to catch terminal errors
+#Logging initialization to catch terminal errors
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -36,8 +36,7 @@ def cleanup_session(session_path=None):
             logger.info(f"Cleaned up session path: {session_path}")
         except Exception as e:
             logger.error(f"Error deleting session: {e}")
-    
-    # REMOVED: Aggressive wiping of tempfile "gradio" folder which kills uploads mid-process.
+
     clear_memory()
 
 def get_intersection_speaker(seg_start, seg_end, speaker_turns):
@@ -84,9 +83,9 @@ def process_media(file_path, progress=gr.Progress()):
     processing_path = file_path
 
     try:
-        # Video to Audio extraction
+        #Video to Audio extraction
         if is_video:
-            progress(0.05, desc="Extracting audio (Optimizing for RAM)...")
+            progress(0.05, desc="Extracting audio...")
             video = VideoFileClip(file_path)
             processing_path = str(session_dir / "extracted_audio.wav")
             video.audio.write_audiofile(
@@ -100,11 +99,11 @@ def process_media(file_path, progress=gr.Progress()):
             video.close()
             clear_memory()
 
-        # Diarization
+        #Diarization
         progress(0.1, desc="Identifying Speakers...")
         diar_pipe = DiarizationPipeline.from_pretrained(Config.DIARIZATION_MODEL, use_auth_token=Config.HF_TOKEN)
         
-        # Guard clause for pipeline environment allocation maps
+        #Guard clause for pipeline environment allocation maps
         if hasattr(diar_pipe, "to") and torch.cuda.is_available():
             diar_pipe.to(torch.device(Config.DEVICE))
             
@@ -113,7 +112,7 @@ def process_media(file_path, progress=gr.Progress()):
         del diar_pipe 
         clear_memory()
 
-        # Transcription
+        #Transcription
         progress(0.3, desc="Starting Transcription...")
         whisper = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
         segments_gen, info = whisper.transcribe(processing_path, vad_filter=True)
@@ -137,11 +136,11 @@ def process_media(file_path, progress=gr.Progress()):
         if not processed_segs:
             return "No text transcribed from the audio.", "Processing complete (Empty text)", None, None, None, None, str(session_dir)
 
-        # Scoring Viral Moments
-        progress(0.75, desc="Analyzing content for viral hooks...")
+        #Scoring Viral Moments
+        progress(0.75, desc="Analyzing content for viral clips...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         
-        # Changed device maps to explicitly inherit configuration profiles safely
+        #Changed device maps to explicitly inherit configuration profiles safely
         classifier_device = 0 if Config.DEVICE == "cuda" else -1
         classifier = pipeline("zero-shot-classification", model=Config.CLASSIFIER_MODEL, device=classifier_device)
         
@@ -171,7 +170,7 @@ def process_media(file_path, progress=gr.Progress()):
                     cand['idx'] = i
                     selected.append(cand)
 
-        # Exporting Clips
+        #Exporting Clips
         progress(0.9, desc="Cutting and exporting viral clips...")
         clips = []
         
