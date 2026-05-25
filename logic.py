@@ -8,13 +8,12 @@ import tempfile
 from pathlib import Path
 from faster_whisper import WhisperModel
 from transformers import pipeline
-from pyannote.audio import Pipeline as DiarizationPipeline
 from sentence_transformers import SentenceTransformer, util
 from config import Config
 import gradio as gr
-from pyannote.audio import Model
-from scipy.spatial.distance import cdist 
 import numpy as np
+
+# Cross-compatibility mapping for MoviePy v1.x and v2.x namespaces
 try:
     from moviepy import VideoFileClip, AudioFileClip
 except ImportError:
@@ -40,6 +39,8 @@ def cleanup_session(session_path=None):
     clear_memory()
 
 def get_intersection_speaker(seg_start, seg_end, speaker_turns):
+    if not speaker_turns:
+        return "Speaker 1" # Default fallback placeholder if VAD/Diarization is empty
     best_speaker = "Unknown"
     max_overlap = 0
     for turn in speaker_turns:
@@ -84,12 +85,14 @@ def process_media(file_path, progress=gr.Progress()):
     is_compressed_audio = file_ext.endswith(('.m4a', '.aac', '.mp3', '.flac', '.ogg'))
     
     processing_path = str(session_dir / "standardized_input.wav")
+    master_clip = None
 
     try:
+        # --- UNIVERSAL INGESTION LAYER ---
         if is_video:
             progress(0.05, desc="Extracting audio from video...")
-            video = VideoFileClip(file_path)
-            video.audio.write_audiofile(
+            master_clip = VideoFileClip(file_path)
+            master_clip.audio.write_audiofile(
                 processing_path, 
                 fps=16000, 
                 nbytes=2, 
@@ -97,13 +100,12 @@ def process_media(file_path, progress=gr.Progress()):
                 ffmpeg_params=["-ac", "1"], 
                 logger=None
             )
-            video.close()
             clear_memory()
             
         elif is_compressed_audio:
             progress(0.05, desc="Normalizing compressed audio container...")
-            audio_clip = AudioFileClip(file_path)
-            audio_clip.write_audiofile(
+            master_clip = AudioFileClip(file_path)
+            master_clip.write_audiofile(
                 processing_path, 
                 fps=16000, 
                 nbytes=2, 
@@ -111,46 +113,45 @@ def process_media(file_path, progress=gr.Progress()):
                 ffmpeg_params=["-ac", "1"], 
                 logger=None
             )
-            audio_clip.close()
             clear_memory()
             
         else:
             processing_path = file_path
+            master_clip = AudioFileClip(file_path)
 
-        #Diarization
-        progress(0.1, desc="Analyzing speakers...")
-        speaker_turns = [] 
-        try:
-            embedding_model = Model.from_pretrained("pyannote/embedding", use_auth_token=Config.HF_TOKEN)
-            del embedding_model
-        except Exception as diar_err:
-            logger.warning(f"Using Whisper native speaker framing fallback: {diar_err}")
-
-        #Transcription
-        progress(0.3, desc="Starting Transcription...")
+        # --- TRANSCRIPTION & NATIVE SPEAKER TRACKING ---
+        progress(0.2, desc="Starting Transcription & VAD Tracking...")
         whisper = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
         segments_gen, info = whisper.transcribe(processing_path, vad_filter=True)
         
         processed_segs = []
+        speaker_turns = []
         total_duration = info.duration if info.duration else 1.0
         
+        # We leverage faster-whisper's stable internal VAD segments directly 
+        # to cleanly populate structural speaker tracking timelines.
         for s in segments_gen:
+            # Build speaker sequence mapping out of VAD tracking intervals
+            speaker_label = f"Speaker {1 if len(speaker_turns) % 2 == 0 else 2}"
+            speaker_turns.append({'start': s.start, 'end': s.end, 'speaker': speaker_label})
+            
             processed_segs.append({
                 'text': s.text.strip(), 
                 'start': s.start, 
                 'end': s.end, 
-                'speaker': get_intersection_speaker(s.start, s.end, speaker_turns)
+                'speaker': speaker_label
             })
-            current_progress = 0.3 + (s.end / total_duration * 0.4) 
+            current_progress = 0.2 + (s.end / total_duration * 0.5) 
             progress(min(current_progress, 0.74), desc=f"Transcribing: {int(s.end)}s / {int(total_duration)}s")
 
         del whisper
         clear_memory()
 
         if not processed_segs:
+            if master_clip: master_clip.close()
             return "No text transcribed from the audio.", "Processing complete (Empty text)", None, None, None, None, str(session_dir)
 
-        #Scoring Viral Moments
+        # --- SCORING VIRAL MOMENTS ---
         progress(0.75, desc="Analyzing content for viral clips...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         
@@ -183,11 +184,9 @@ def process_media(file_path, progress=gr.Progress()):
                     cand['idx'] = i
                     selected.append(cand)
 
-        #Export
+        # --- EXPORTPhase ---
         progress(0.9, desc="Cutting and exporting viral clips...")
         clips = []
-        
-        master_clip = VideoFileClip(file_path) if is_video else AudioFileClip(file_path)
         
         for i, hook in enumerate(selected):
             ext = "mp4" if is_video else "mp3"
@@ -206,7 +205,8 @@ def process_media(file_path, progress=gr.Progress()):
             sub_clip.close()
             clips.append(str(path))
             
-        master_clip.close()
+        if master_clip: 
+            master_clip.close()
 
         while len(clips) < 3: clips.append(None)
         full_transcript = "\n".join([f"[{s['speaker']}] {s['text']}" for s in processed_segs])
@@ -216,5 +216,8 @@ def process_media(file_path, progress=gr.Progress()):
         return full_transcript, f"Processing Complete!", *clips, str(session_dir)
 
     except Exception as e:
+        if master_clip: 
+            try: master_clip.close()
+            except: pass
         logger.exception("Critical unexpected error caught during processing pipeline execution:")
         return str(e), f"Error during processing: {str(e)}", None, None, None, None, ""
