@@ -14,7 +14,6 @@ sentence-transformers
 librosa
 pydub
 python-magic
-pyannote-whisper 
-
+git+https://github.com/huggingface/pyannote-whisper.git
 
 
