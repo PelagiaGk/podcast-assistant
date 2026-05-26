@@ -91,7 +91,7 @@ def get_optimized_scores(windows, embedder):
 def process_media(file_path, progress=gr.Progress()):
     if not file_path or not os.path.exists(file_path): 
         logger.error(f"Provided file path invalid or non-existent: {file_path}")
-        return "### Error\nFile selection missing or not found on the backend host.", None, None, None, "", ""
+        return "Error\nFile selection missing or not found on the backend host.", None, None, None, "", ""
     
     session_id = str(uuid.uuid4())
     session_dir = Path(tempfile.gettempdir()) / f"session_{session_id}"
@@ -153,7 +153,7 @@ def process_media(file_path, progress=gr.Progress()):
         clear_memory()
 
         if not processed_segs:
-            return "### Error\nNo dialogue transcribed from the media source.", None, None, None, str(session_dir), str(session_dir)
+            return "Error\nNo dialogue transcribed from the media source.", None, None, None, str(session_dir), str(session_dir)
 
         #Semantic Window Search
         progress(0.75, desc="Analyzing content for viral clips...")
@@ -227,7 +227,7 @@ def process_media(file_path, progress=gr.Progress()):
         clip2 = clips[1] if len(clips) > 1 else None
         clip3 = clips[2] if len(clips) > 2 else None
 
-        status_summary = f"### Processing Complete!\nSuccessfully extracted {len(clips)} highly relevant viral clip(s)."
+        status_summary = f"Processing Complete!\nSuccessfully extracted {len(clips)} highly relevant viral clip(s)."
         return status_summary, clip1, clip2, clip3, str(session_dir), str(session_dir)
 
     except Exception as e:
@@ -235,5 +235,5 @@ def process_media(file_path, progress=gr.Progress()):
             try: master_clip.close()
             except: pass
         logger.exception("Critical unexpected error caught during processing pipeline execution:")
-        error_md = f"### Pipeline Execution Failed\n**Reason:** {str(e)}"
+        error_md = f"Pipeline Execution Failed\n**Reason:** {str(e)}"
         return error_md, None, None, None, str(session_dir), str(session_dir)
