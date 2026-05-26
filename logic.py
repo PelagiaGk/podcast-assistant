@@ -8,6 +8,7 @@ import logging
 import gc
 import shutil
 import tempfile
+import subprocess
 from pathlib import Path
 from faster_whisper import WhisperModel, BatchedInferencePipeline
 from sentence_transformers import SentenceTransformer, util
@@ -63,7 +64,6 @@ def get_intersection_speaker(seg_start, seg_end, speaker_turns):
 def get_optimized_scores(windows, embedder):
     if not windows: return [], []
     
-    #Vector search with SentenceTransformer
     anchor_embeddings = embedder.encode(Config.ANCHOR_THEMES, convert_to_tensor=True)
     window_texts = [w['text'] for w in windows]
     window_embeddings = embedder.encode(window_texts, convert_to_tensor=True)
@@ -77,7 +77,6 @@ def get_optimized_scores(windows, embedder):
         row_scores = similarity_matrix[i]
         s_map = {label: row_scores[j].item() for j, label in enumerate(Config.ANCHOR_THEMES)}
         
-        #Weighted scaling based on config requirements
         score = sum(s_map[label] * Config.WEIGHTS[label] for label in Config.ANCHOR_THEMES)
         
         best_theme_idx = torch.argmax(row_scores).item()
@@ -127,6 +126,7 @@ def process_media(file_path, progress=gr.Progress()):
         else:
             processing_path = file_path
 
+        #Batched Whisper Pipeline on CPU
         progress(0.2, desc="Starting Transcription...")
         base_model = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
         batched_model = BatchedInferencePipeline(base_model)
@@ -155,7 +155,7 @@ def process_media(file_path, progress=gr.Progress()):
         if not processed_segs:
             return "### Error\nNo dialogue transcribed from the media source.", None, None, None, str(session_dir), str(session_dir)
 
-        #High-Speed Semantic Window Search
+        #Semantic Window Search
         progress(0.75, desc="Analyzing content for viral clips...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         
@@ -204,18 +204,24 @@ def process_media(file_path, progress=gr.Progress()):
                 )
                 sub_clip.close()
                 clips.append(str(path))
+            master_clip.close()
         else:
-            master_clip = AudioFileClip(processing_path)
             for i, hook in enumerate(selected):
                 path = session_dir / f"clip_{i+1}.mp3"
-                master_clip.write_audiofile(
-                    str(path), fps=44100, nbytes=2, codec="libmp3lame", logger=None,
-                    ffmpeg_params=["-ss", str(hook['start']), "-to", str(hook['end'])]
-                )
+                duration = hook['end'] - hook['start']
+                
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-ss", str(hook['start']),
+                    "-t", str(duration),
+                    "-i", str(processing_path),
+                    "-acodec", "libmp3lame",
+                    "-b:a", "192k",
+                    str(path)
+                ]
+                
+                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
                 clips.append(str(path))
-            
-        if master_clip:
-            master_clip.close()
 
         clip1 = clips[0] if len(clips) > 0 else None
         clip2 = clips[1] if len(clips) > 1 else None
