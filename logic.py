@@ -1,3 +1,6 @@
+import os
+os.environ["HF_HOME"] = "/tmp/hf_cache"
+os.environ["TORCH_HOME"] = "/tmp/torch_cache"
 import torch
 import os
 import uuid
@@ -29,7 +32,11 @@ def safe_slice(clip, start_time, end_time):
     elif hasattr(clip, "subclip"):
         return clip.subclip(start_time, end_time)  #Legacy MoviePy v1.x
     else:
-        raise AttributeError("The loaded MoviePy clip structure does not support cutting via subclip or subcut.")
+        #Fallback: Try using MoviePy's global fl_time or select_subclip if available
+        try:
+            return clip.fl_time(lambda t: t + start_time, keep_duration=False).set_duration(end_time - start_time)
+        except Exception:
+            raise AttributeError(f"The loaded MoviePy clip structure ({type(clip)}) does not support cutting via standard methods.")
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +107,7 @@ def get_optimized_scores(windows, embedder, classifier_pipe):
 def process_media(file_path, progress=gr.Progress()):
     if not file_path or not os.path.exists(file_path): 
         logger.error(f"Provided file path invalid or non-existent: {file_path}")
-        return "Error: File missing.", "File not found on backend", None, None, None, None, ""
+        return "Error: File missing or not found on backend.", None, None, None, "", ""
     
     session_id = str(uuid.uuid4())
     session_dir = Path(tempfile.gettempdir()) / f"session_{session_id}"
@@ -171,7 +178,7 @@ def process_media(file_path, progress=gr.Progress()):
 
         if not processed_segs:
             if master_clip: master_clip.close()
-            return "No text transcribed from the audio.", "Processing complete (Empty text)", None, None, None, None, str(session_dir)
+            return "No text transcribed from the audio.", None, None, None, str(session_dir), str(session_dir)
 
         #Viral Clips
         progress(0.75, desc="Analyzing content for viral clips...")
@@ -223,26 +230,37 @@ def process_media(file_path, progress=gr.Progress()):
             sub_clip = safe_slice(master_clip, hook['start'], hook['end'])
             
             if is_video:
-                sub_clip = safe_slice(master_clip, hook['start'], hook['end'])
-            
-            if is_video:
                 sub_clip.write_videofile(
                     str(path), codec="libx264", audio_codec="aac", 
-                    temp_audiofile=str(session_dir/"temp.m4a"), remove_temp=True, logger=None
+                    temp_audiofile=str(session_dir / "temp.m4a"), remove_temp=True, logger=None
                 )
             else:
                 sub_clip.write_audiofile(
                     str(path), fps=44100, nbytes=2, codec="libmp3lame", logger=None
                 )
             
-            #Explicitly release references
+            #Release references and close clips
             if hasattr(sub_clip, "close"):
                 sub_clip.close()
             del sub_clip
+            
+            #Save the path to return to Gradio
+            clips.append(str(path))
+            
+        if master_clip:
+            master_clip.close()
+
+        clip1 = clips[0] if len(clips) > 0 else None
+        clip2 = clips[1] if len(clips) > 1 else None
+        clip3 = clips[2] if len(clips) > 2 else None
+
+        status_summary = f"### Processing Complete!\nGenerated {len(clips)} viral clips successfully."
+
+        return status_summary, clip1, clip2, clip3, str(session_dir), str(session_dir)
 
     except Exception as e:
         if master_clip: 
             try: master_clip.close()
             except: pass
         logger.exception("Critical unexpected error caught during processing pipeline execution:")
-        return str(e), f"Error during processing: {str(e)}", None, None, None, None, ""
+        raise gr.Error(f"Pipeline failed: {str(e)}")
