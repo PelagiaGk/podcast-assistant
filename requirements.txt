@@ -1,19 +1,18 @@
-numpy
-torch
-torchaudio
+numpy<2.0.0
+torch==2.1.0
+torchaudio==2.1.0
 moviepy
 faster-whisper
-pyannote.audio
-gradio
+pyannote.audio==3.1.1
+gradio==5.0.1
 imageio-ffmpeg
-huggingface-hub
-pydantic
+huggingface-hub==0.25.2
+pydantic==2.10.6
 python-dotenv
 transformers
 sentence-transformers
 librosa
 pydub
 python-magic
-git+https://github.com/huggingface/pyannote-whisper.git
 
 
