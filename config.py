@@ -14,7 +14,7 @@ class Config:
     
     #Model Selection
     WHISPER_MODEL = "base" 
-    CLASSIFIER_MODEL = "valhalla/distilbart-mnli-12-1" 
+    #CLASSIFIER_MODEL = "valhalla/distilbart-mnli-12-1" 
     EMBEDDER_MODEL = "all-MiniLM-L6-v2"
     DIARIZATION_MODEL = "pyannote/speaker-diarization@2.1"
 

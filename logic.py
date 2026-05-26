@@ -65,42 +65,36 @@ def get_intersection_speaker(seg_start, seg_end, speaker_turns):
             best_speaker = turn['speaker']
     return best_speaker
 
-def get_optimized_scores(windows, embedder, classifier_pipe):
+def get_optimized_scores(windows, embedder):
     if not windows: return [], []
     
+    #Encode anchor themes and all text windows into vector spaces
     anchor_embeddings = embedder.encode(Config.ANCHOR_THEMES, convert_to_tensor=True)
     window_texts = [w['text'] for w in windows]
     window_embeddings = embedder.encode(window_texts, convert_to_tensor=True)
     
-    cosine_scores = util.cos_sim(window_embeddings, anchor_embeddings).max(dim=1).values
-    threshold = torch.quantile(cosine_scores, 0.7) if len(cosine_scores) > 1 else 0
-    candidate_indices = [i for i, score in enumerate(cosine_scores) if score >= threshold]
+    #Shape (num_windows, num_anchors)
+    similarity_matrix = util.cos_sim(window_embeddings, anchor_embeddings)
     
-    final_scores = [0.0] * len(windows)
-    final_labels = ["Uncategorized"] * len(windows)
+    final_scores = []
+    final_labels = []
     
-    if candidate_indices:
-        candidate_texts = [windows[i]['text'] for i in candidate_indices]
+    for i, window in enumerate(windows):
+        row_scores = similarity_matrix[i]
         
-        #Process in micro-batches to save HF Spaces memory
-        BATCH_SIZE = 4 
-        results = []
-        for i in range(0, len(candidate_texts), BATCH_SIZE):
-            batch = candidate_texts[i:i+BATCH_SIZE]
-            #Lowering batch_size inside pipeline can stop VRAM spikes
-            batch_results = classifier_pipe(batch, Config.ANCHOR_THEMES, batch_size=1)
-            results.extend(batch_results)
-            
-            #Micro-cleanup mid-processing
-            del batch_results
-            clear_memory()
-
-        for idx, res in zip(candidate_indices, results):
-            s_map = dict(zip(res['labels'], res['scores']))
-            score = sum(s_map[label] * Config.WEIGHTS[label] for label in Config.ANCHOR_THEMES)
-            final_scores[idx] = score
-            final_labels[idx] = res['labels'][0]
-            
+        #Build a temporary mapping matching theme name to its similarity score
+        s_map = {label: row_scores[j].item() for j, label in enumerate(Config.ANCHOR_THEMES)}
+        
+        #Score based on configured weights
+        score = sum(s_map[label] * Config.WEIGHTS[label] for label in Config.ANCHOR_THEMES)
+        
+        #Find the highest scoring theme label to pass back to the metadata
+        best_theme_idx = torch.argmax(row_scores).item()
+        best_label = Config.ANCHOR_THEMES[best_theme_idx]
+        
+        final_scores.append(score)
+        final_labels.append(best_label)
+        
     return final_scores, final_labels
 
 @torch.inference_mode()
@@ -186,9 +180,6 @@ def process_media(file_path, progress=gr.Progress()):
         progress(0.75, desc="Analyzing content for viral clips...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         
-        classifier_device = 0 if Config.DEVICE == "cuda" else -1
-        classifier = pipeline("zero-shot-classification", model=Config.CLASSIFIER_MODEL, device=classifier_device)
-        
         windows = []
         for i in range(len(processed_segs)):
             curr_text, word_count, actual_start = [], 0, processed_segs[i]['start']
@@ -201,9 +192,8 @@ def process_media(file_path, progress=gr.Progress()):
                     windows.append({'text': " ".join(curr_text), 'start': actual_start, 'end': seg['end']})
                     break
 
-        scores, labels = get_optimized_scores(windows, embedder, classifier)
-        del classifier
-        clear_memory()
+        #Embedder
+        scores, labels = get_optimized_scores(windows, embedder)
 
         for i, w in enumerate(windows):
             w['score'], w['label'] = scores[i], labels[i]
