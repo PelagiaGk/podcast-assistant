@@ -107,11 +107,8 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600))
         c3 = gr.File(label="Clip 3", visible=False)
 
     with gr.Row():
-        with gr.Column(scale=1, min_width=150):
-            done_btn = gr.Button("Done", variant="stop", size="sm")
-        with gr.Column(scale=4): 
-            pass
-
+        done_btn = gr.Button("Done", variant="stop")
+        
     run_btn.click(
         fn=show_loading,
         inputs=None,
