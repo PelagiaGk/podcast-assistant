@@ -9,7 +9,7 @@ import gc
 import shutil
 import tempfile
 from pathlib import Path
-from faster_whisper import WhisperModel
+from faster_whisper import WhisperModel, BatchedInferencePipeline
 from sentence_transformers import SentenceTransformer, util
 from config import Config
 import gradio as gr
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 def safe_slice(clip, start_time, end_time):
     """Slices a MoviePy Video clip safely using explicit version compatibility checks."""
     if hasattr(clip, "subcut"):
-        return clip.subcut(start_time, end_time) #Modern MoviePy v2.x 
+        return clip.subcut(start_time, end_time)  #Modern MoviePy v2.x
     elif hasattr(clip, "subclip"):
         return clip.subclip(start_time, end_time)  #Legacy MoviePy v1.x
     else:
@@ -63,7 +63,7 @@ def get_intersection_speaker(seg_start, seg_end, speaker_turns):
 def get_optimized_scores(windows, embedder):
     if not windows: return [], []
     
-    #Accelerated vector search
+    #Vector search with SentenceTransformer
     anchor_embeddings = embedder.encode(Config.ANCHOR_THEMES, convert_to_tensor=True)
     window_texts = [w['text'] for w in windows]
     window_embeddings = embedder.encode(window_texts, convert_to_tensor=True)
@@ -127,10 +127,10 @@ def process_media(file_path, progress=gr.Progress()):
         else:
             processing_path = file_path
 
-        #Faster-Whisper with multi-threaded CPU pipeline adjustments
         progress(0.2, desc="Starting Transcription...")
-        whisper = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
-        segments_gen, info = whisper.transcribe(processing_path, vad_filter=True, batch_size=16)
+        base_model = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
+        batched_model = BatchedInferencePipeline(base_model)
+        segments_gen, info = batched_model.transcribe(processing_path, vad_filter=True, batch_size=16)
         
         processed_segs = []
         speaker_turns = []
@@ -149,12 +149,13 @@ def process_media(file_path, progress=gr.Progress()):
             current_progress = 0.2 + (s.end / total_duration * 0.5) 
             progress(min(current_progress, 0.74), desc=f"Transcribing: {int(s.end)}s / {int(total_duration)}s")
 
-        del whisper
+        del batched_model, base_model
         clear_memory()
 
         if not processed_segs:
             return "### Error\nNo dialogue transcribed from the media source.", None, None, None, str(session_dir), str(session_dir)
 
+        #High-Speed Semantic Window Search
         progress(0.75, desc="Analyzing content for viral clips...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         
@@ -196,7 +197,6 @@ def process_media(file_path, progress=gr.Progress()):
             master_clip = VideoFileClip(file_path)
             for i, hook in enumerate(selected):
                 path = session_dir / f"clip_{i+1}.mp4"
-                #safe_slice is evaluated here for video assets
                 sub_clip = safe_slice(master_clip, hook['start'], hook['end'])
                 sub_clip.write_videofile(
                     str(path), codec="libx264", audio_codec="aac", 
@@ -208,7 +208,6 @@ def process_media(file_path, progress=gr.Progress()):
             master_clip = AudioFileClip(processing_path)
             for i, hook in enumerate(selected):
                 path = session_dir / f"clip_{i+1}.mp3"
-                #Write straight via backend FFmpeg boundaries
                 master_clip.write_audiofile(
                     str(path), fps=44100, nbytes=2, codec="libmp3lame", logger=None,
                     ffmpeg_params=["-ss", str(hook['start']), "-to", str(hook['end'])]
