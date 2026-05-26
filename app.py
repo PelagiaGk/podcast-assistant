@@ -40,18 +40,23 @@ SPINNER_HTML = """
 """
 
 def show_loading():
-    """Instantly reveals the spinner loop and clears out old asset boxes."""
+    """Instantly reveals the spinner loop and keeps clip headings/boxes hidden."""
     return (
         gr.HTML(value=SPINNER_HTML, visible=True),
+        gr.Markdown(visible=False), 
         gr.File(visible=False),
         gr.File(visible=False),
         gr.File(visible=False)
     )
 
 def handle_pipeline_results(transcript_text, path1, path2, path3, sess1, sess2):
-    """Evaluates pipeline outputs and sets visibility to match the extracted files."""
+    """Evaluates pipeline outputs, reveals section heading, and updates clips."""
+    #Determine if any viral clips were actually returned
+    has_clips = any([path1, path2, path3])
+    
     return (
         gr.HTML(visible=False), 
+        gr.Markdown(visible=True if has_clips else False),
         transcript_text,
         gr.File(value=path1, visible=True if path1 else False),
         gr.File(value=path2, visible=True if path2 else False),
@@ -61,15 +66,16 @@ def handle_pipeline_results(transcript_text, path1, path2, path3, sess1, sess2):
     )
 
 def reset_ui():
-    """Returns empty values to reset the UI components after cleanup."""
+    """Returns empty values to completely reset the UI components after cleanup."""
     return (
-        "",                       
+        "",                                   
         gr.File(value=None, visible=False),  
         gr.File(value=None, visible=False),  
         gr.File(value=None, visible=False),  
-        None,                    
-        "",                       
-        gr.HTML(visible=False)    
+        None,                                 
+        "",                                   
+        gr.HTML(visible=False),               
+        gr.Markdown(visible=False)            
     )
 
 #UI Interface
@@ -91,9 +97,8 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600))
         with gr.Column(scale=2):
             transcript = gr.Textbox(label="Transcript", lines=12)
 
-    gr.Markdown("### Selected Viral Clips")
+    clips_header = gr.Markdown("### Selected Viral Clips", visible=False)
     
-    #Hidden components 
     spinner = gr.HTML(value=SPINNER_HTML, visible=False)
     
     with gr.Row():
@@ -102,12 +107,15 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600))
         c3 = gr.File(label="Clip 3", visible=False)
 
     with gr.Row():
-        done_btn = gr.Button("Done", variant="stop")
+        with gr.Column(scale=1, min_width=150):
+            done_btn = gr.Button("Done", variant="stop", size="sm")
+        with gr.Column(scale=4): 
+            pass
 
     run_btn.click(
         fn=show_loading,
         inputs=None,
-        outputs=[spinner, c1, c2, c3]
+        outputs=[spinner, clips_header, c1, c2, c3]
     ).then(
         fn=process_media, 
         inputs=media_in, 
@@ -115,16 +123,16 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600))
     ).then(
         fn=handle_pipeline_results,
         inputs=[transcript, c1, c2, c3, session_state, session_state],
-        outputs=[spinner, transcript, c1, c2, c3, session_state, session_state]
+        outputs=[spinner, clips_header, transcript, c1, c2, c3, session_state, session_state]
     )
     
-    #Deletes files, clears the UI 
+    #Cleanup trigger
     done_btn.click(
         fn=cleanup_session,
         inputs=session_state
     ).then(
         fn=reset_ui,
-        outputs=[transcript, c1, c2, c3, media_in, session_state, spinner]
+        outputs=[transcript, c1, c2, c3, media_in, session_state, spinner, clips_header]
     )
 
     demo.unload(fn=cleanup_session)
@@ -137,7 +145,7 @@ if __name__ == "__main__":
         import sys
         sys.exit(1)
 
-    #Pre-launch cleanup
+    #Pre-launch temp cleanup 
     temp_path = Path(tempfile.gettempdir())
     for old_session in temp_path.glob("session_*"):
         shutil.rmtree(old_session, ignore_errors=True)
