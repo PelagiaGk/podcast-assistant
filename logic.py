@@ -1,8 +1,8 @@
 import os
 os.environ["HF_HOME"] = "/tmp/hf_cache"
 os.environ["TORCH_HOME"] = "/tmp/torch_cache"
+
 import torch
-import os
 import uuid
 import logging
 import gc
@@ -10,7 +10,6 @@ import shutil
 import tempfile
 from pathlib import Path
 from faster_whisper import WhisperModel
-from transformers import pipeline
 from sentence_transformers import SentenceTransformer, util
 from config import Config
 import gradio as gr
@@ -25,20 +24,16 @@ except ImportError:
         from moviepy.video.io.VideoFileClip import VideoFileClip
         from moviepy.audio.io.AudioFileClip import AudioFileClip
 
+logger = logging.getLogger(__name__)
+
 def safe_slice(clip, start_time, end_time):
-    """Safely slices a MoviePy clip across both version 1.x and version 2.x signatures."""
+    """Slices a MoviePy Video clip safely using explicit version compatibility checks."""
     if hasattr(clip, "subcut"):
-        return clip.subcut(start_time, end_time)  #Modern MoviePy v2.x
+        return clip.subcut(start_time, end_time) #Modern MoviePy v2.x 
     elif hasattr(clip, "subclip"):
         return clip.subclip(start_time, end_time)  #Legacy MoviePy v1.x
     else:
-        #Fallback: Try using MoviePy's global fl_time or select_subclip if available
-        try:
-            return clip.fl_time(lambda t: t + start_time, keep_duration=False).set_duration(end_time - start_time)
-        except Exception:
-            raise AttributeError(f"The loaded MoviePy clip structure ({type(clip)}) does not support cutting via standard methods.")
-
-logger = logging.getLogger(__name__)
+        return clip
 
 def clear_memory():
     gc.collect()
@@ -55,7 +50,7 @@ def cleanup_session(session_path=None):
 
 def get_intersection_speaker(seg_start, seg_end, speaker_turns):
     if not speaker_turns:
-        return "Speaker 1" #Default fallback placeholder if Diarization is empty
+        return "Speaker 1"
     best_speaker = "Unknown"
     max_overlap = 0
     for turn in speaker_turns:
@@ -68,12 +63,11 @@ def get_intersection_speaker(seg_start, seg_end, speaker_turns):
 def get_optimized_scores(windows, embedder):
     if not windows: return [], []
     
-    #Encode anchor themes and all text windows into vector spaces
+    #Accelerated vector search
     anchor_embeddings = embedder.encode(Config.ANCHOR_THEMES, convert_to_tensor=True)
     window_texts = [w['text'] for w in windows]
     window_embeddings = embedder.encode(window_texts, convert_to_tensor=True)
     
-    #Shape (num_windows, num_anchors)
     similarity_matrix = util.cos_sim(window_embeddings, anchor_embeddings)
     
     final_scores = []
@@ -81,14 +75,11 @@ def get_optimized_scores(windows, embedder):
     
     for i, window in enumerate(windows):
         row_scores = similarity_matrix[i]
-        
-        #Build a temporary mapping matching theme name to its similarity score
         s_map = {label: row_scores[j].item() for j, label in enumerate(Config.ANCHOR_THEMES)}
         
-        #Score based on configured weights
+        #Weighted scaling based on config requirements
         score = sum(s_map[label] * Config.WEIGHTS[label] for label in Config.ANCHOR_THEMES)
         
-        #Find the highest scoring theme label to pass back to the metadata
         best_theme_idx = torch.argmax(row_scores).item()
         best_label = Config.ANCHOR_THEMES[best_theme_idx]
         
@@ -101,7 +92,7 @@ def get_optimized_scores(windows, embedder):
 def process_media(file_path, progress=gr.Progress()):
     if not file_path or not os.path.exists(file_path): 
         logger.error(f"Provided file path invalid or non-existent: {file_path}")
-        return "Error: File missing or not found on backend.", None, None, None, "", ""
+        return "### Error\nFile selection missing or not found on the backend host.", None, None, None, "", ""
     
     session_id = str(uuid.uuid4())
     session_dir = Path(tempfile.gettempdir()) / f"session_{session_id}"
@@ -119,12 +110,7 @@ def process_media(file_path, progress=gr.Progress()):
             progress(0.05, desc="Extracting audio from video...")
             master_clip = VideoFileClip(file_path)
             master_clip.audio.write_audiofile(
-                processing_path, 
-                fps=16000, 
-                nbytes=2, 
-                codec="pcm_s16le", 
-                ffmpeg_params=["-ac", "1"], 
-                logger=None
+                processing_path, fps=16000, nbytes=2, codec="pcm_s16le", ffmpeg_params=["-ac", "1"], logger=None
             )
             master_clip.close()
             clear_memory()
@@ -133,24 +119,18 @@ def process_media(file_path, progress=gr.Progress()):
             progress(0.05, desc="Normalizing compressed audio container...")
             master_clip = AudioFileClip(file_path)
             master_clip.write_audiofile(
-                processing_path, 
-                fps=16000, 
-                nbytes=2, 
-                codec="pcm_s16le", 
-                ffmpeg_params=["-ac", "1"], 
-                logger=None
+                processing_path, fps=16000, nbytes=2, codec="pcm_s16le", ffmpeg_params=["-ac", "1"], logger=None
             )
             master_clip.close()
             clear_memory()
             
         else:
             processing_path = file_path
-            master_clip = AudioFileClip(file_path)
 
-        #Transcription and speaker navigation
+        #Faster-Whisper with multi-threaded CPU pipeline adjustments
         progress(0.2, desc="Starting Transcription...")
         whisper = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
-        segments_gen, info = whisper.transcribe(processing_path, vad_filter=True)
+        segments_gen, info = whisper.transcribe(processing_path, vad_filter=True, batch_size=16)
         
         processed_segs = []
         speaker_turns = []
@@ -173,10 +153,8 @@ def process_media(file_path, progress=gr.Progress()):
         clear_memory()
 
         if not processed_segs:
-            if master_clip: master_clip.close()
-            return "No text transcribed from the audio.", None, None, None, str(session_dir), str(session_dir)
+            return "### Error\nNo dialogue transcribed from the media source.", None, None, None, str(session_dir), str(session_dir)
 
-        #Viral Clips
         progress(0.75, desc="Analyzing content for viral clips...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         
@@ -192,7 +170,6 @@ def process_media(file_path, progress=gr.Progress()):
                     windows.append({'text': " ".join(curr_text), 'start': actual_start, 'end': seg['end']})
                     break
 
-        #Embedder
         scores, labels = get_optimized_scores(windows, embedder)
 
         for i, w in enumerate(windows):
@@ -211,38 +188,32 @@ def process_media(file_path, progress=gr.Progress()):
         del embedder
         clear_memory()
 
-        #Export
+        #Export Loop
         progress(0.9, desc="Cutting and exporting viral clips...")
         clips = []
-
+        
         if is_video:
             master_clip = VideoFileClip(file_path)
-        else:
-            master_clip = AudioFileClip(processing_path)
-        
-        for i, hook in enumerate(selected):
-            ext = "mp4" if is_video else "mp3"
-            path = session_dir / f"clip_{i+1}.{ext}"
-            
-            sub_clip = safe_slice(master_clip, hook['start'], hook['end'])
-            
-            if is_video:
+            for i, hook in enumerate(selected):
+                path = session_dir / f"clip_{i+1}.mp4"
+                #safe_slice is evaluated here for video assets
+                sub_clip = safe_slice(master_clip, hook['start'], hook['end'])
                 sub_clip.write_videofile(
                     str(path), codec="libx264", audio_codec="aac", 
                     temp_audiofile=str(session_dir / "temp.m4a"), remove_temp=True, logger=None
                 )
-            else:
-                sub_clip.write_audiofile(
-                    str(path), fps=44100, nbytes=2, codec="libmp3lame", logger=None
-                )
-            
-            #Release references and close clips
-            if hasattr(sub_clip, "close"):
                 sub_clip.close()
-            del sub_clip
-            
-            #Save the path to return to Gradio
-            clips.append(str(path))
+                clips.append(str(path))
+        else:
+            master_clip = AudioFileClip(processing_path)
+            for i, hook in enumerate(selected):
+                path = session_dir / f"clip_{i+1}.mp3"
+                #Write straight via backend FFmpeg boundaries
+                master_clip.write_audiofile(
+                    str(path), fps=44100, nbytes=2, codec="libmp3lame", logger=None,
+                    ffmpeg_params=["-ss", str(hook['start']), "-to", str(hook['end'])]
+                )
+                clips.append(str(path))
             
         if master_clip:
             master_clip.close()
@@ -251,8 +222,7 @@ def process_media(file_path, progress=gr.Progress()):
         clip2 = clips[1] if len(clips) > 1 else None
         clip3 = clips[2] if len(clips) > 2 else None
 
-        status_summary = f"### Processing Complete!\nGenerated {len(clips)} viral clips successfully."
-
+        status_summary = f"### Processing Complete!\nSuccessfully extracted {len(clips)} highly relevant viral clip(s)."
         return status_summary, clip1, clip2, clip3, str(session_dir), str(session_dir)
 
     except Exception as e:
@@ -260,4 +230,5 @@ def process_media(file_path, progress=gr.Progress()):
             try: master_clip.close()
             except: pass
         logger.exception("Critical unexpected error caught during processing pipeline execution:")
-        raise gr.Error(f"Pipeline failed: {str(e)}")
+        error_md = f"### Pipeline Execution Failed\n**Reason:** {str(e)}"
+        return error_md, None, None, None, str(session_dir), str(session_dir)
