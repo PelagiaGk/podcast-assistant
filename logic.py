@@ -132,6 +132,7 @@ def process_media(file_path, progress=gr.Progress()):
                 ffmpeg_params=["-ac", "1"], 
                 logger=None
             )
+            master_clip.close()
             clear_memory()
             
         elif is_compressed_audio:
@@ -145,6 +146,7 @@ def process_media(file_path, progress=gr.Progress()):
                 ffmpeg_params=["-ac", "1"], 
                 logger=None
             )
+            master_clip.close()
             clear_memory()
             
         else:
@@ -222,6 +224,11 @@ def process_media(file_path, progress=gr.Progress()):
         #Export
         progress(0.9, desc="Cutting and exporting viral clips...")
         clips = []
+
+        if is_video:
+            master_clip = VideoFileClip(file_path)
+        else:
+            master_clip = AudioFileClip(processing_path)
         
         for i, hook in enumerate(selected):
             ext = "mp4" if is_video else "mp3"
