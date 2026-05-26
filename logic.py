@@ -60,22 +60,40 @@ def get_intersection_speaker(seg_start, seg_end, speaker_turns):
 
 def get_optimized_scores(windows, embedder, classifier_pipe):
     if not windows: return [], []
+    
     anchor_embeddings = embedder.encode(Config.ANCHOR_THEMES, convert_to_tensor=True)
     window_texts = [w['text'] for w in windows]
     window_embeddings = embedder.encode(window_texts, convert_to_tensor=True)
+    
     cosine_scores = util.cos_sim(window_embeddings, anchor_embeddings).max(dim=1).values
     threshold = torch.quantile(cosine_scores, 0.7) if len(cosine_scores) > 1 else 0
     candidate_indices = [i for i, score in enumerate(cosine_scores) if score >= threshold]
+    
     final_scores = [0.0] * len(windows)
     final_labels = ["Uncategorized"] * len(windows)
+    
     if candidate_indices:
         candidate_texts = [windows[i]['text'] for i in candidate_indices]
-        results = classifier_pipe(candidate_texts, Config.ANCHOR_THEMES, batch_size=1)
+        
+        #Process in micro-batches to save HF Spaces memory
+        BATCH_SIZE = 4 
+        results = []
+        for i in range(0, len(candidate_texts), BATCH_SIZE):
+            batch = candidate_texts[i:i+BATCH_SIZE]
+            #Lowering batch_size inside pipeline can stop VRAM spikes
+            batch_results = classifier_pipe(batch, Config.ANCHOR_THEMES, batch_size=1)
+            results.extend(batch_results)
+            
+            #Micro-cleanup mid-processing
+            del batch_results
+            clear_memory()
+
         for idx, res in zip(candidate_indices, results):
             s_map = dict(zip(res['labels'], res['scores']))
             score = sum(s_map[label] * Config.WEIGHTS[label] for label in Config.ANCHOR_THEMES)
             final_scores[idx] = score
             final_labels[idx] = res['labels'][0]
+            
     return final_scores, final_labels
 
 @torch.inference_mode()
@@ -175,6 +193,9 @@ def process_media(file_path, progress=gr.Progress()):
                     break
 
         scores, labels = get_optimized_scores(windows, embedder, classifier)
+        del classifier
+        clear_memory()
+
         for i, w in enumerate(windows):
             w['score'], w['label'] = scores[i], labels[i]
         
@@ -187,6 +208,9 @@ def process_media(file_path, progress=gr.Progress()):
                 if all(util.cos_sim(embeddings[i], embeddings[s['idx']]).item() < Config.SIMILARITY_THRESHOLD for s in selected):
                     cand['idx'] = i
                     selected.append(cand)
+                    
+        del embedder
+        clear_memory()
 
         #Export
         progress(0.9, desc="Cutting and exporting viral clips...")
@@ -199,6 +223,9 @@ def process_media(file_path, progress=gr.Progress()):
             sub_clip = safe_slice(master_clip, hook['start'], hook['end'])
             
             if is_video:
+                sub_clip = safe_slice(master_clip, hook['start'], hook['end'])
+            
+            if is_video:
                 sub_clip.write_videofile(
                     str(path), codec="libx264", audio_codec="aac", 
                     temp_audiofile=str(session_dir/"temp.m4a"), remove_temp=True, logger=None
@@ -207,8 +234,11 @@ def process_media(file_path, progress=gr.Progress()):
                 sub_clip.write_audiofile(
                     str(path), fps=44100, nbytes=2, codec="libmp3lame", logger=None
                 )
-            sub_clip.close()
-            clips.append(str(path))
+            
+            #Explicitly release references
+            if hasattr(sub_clip, "close"):
+                sub_clip.close()
+            del sub_clip
 
     except Exception as e:
         if master_clip: 
