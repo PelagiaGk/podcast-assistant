@@ -176,16 +176,37 @@ def process_media(file_path, progress=gr.Progress()):
         for i, w in enumerate(windows):
             w['score'], w['label'] = scores[i], labels[i]
         
+        #Filter and rank items with a valid score
         ranked = sorted([w for w in windows if w['score'] > 0.5], key=lambda x: x['score'], reverse=True)
+        
         selected = []
         if ranked:
-            embeddings = embedder.encode([r['text'] for r in ranked], convert_to_tensor=True)
-            for i, cand in enumerate(ranked):
-                if len(selected) >= 3: break
-                if all(util.cos_sim(embeddings[i], embeddings[s['idx']]).item() < Config.SIMILARITY_THRESHOLD for s in selected):
-                    cand['idx'] = i
+            for cand in ranked:
+                if len(selected) >= 3: 
+                    break
+                #Prevent choosing clips that physically overlap in time
+                time_overlap = False
+                for sel in selected:
+                    #Check if timelines intersect
+                    if max(cand['start'], sel['start']) < min(cand['end'], sel['end']):
+                        time_overlap = True
+                        break
+                if time_overlap:
+                    continue
+
+                #Semantic Similarity Check
+                if len(selected) == 0:
                     selected.append(cand)
+                else:
+                    #Encode current candidate text and existing selected texts dynamically
+                    cand_emb = embedder.encode(cand['text'], convert_to_tensor=True)
+                    sel_embs = embedder.encode([s['text'] for s in selected], convert_to_tensor=True)
                     
+                    sim_scores = util.cos_sim(cand_emb, sel_embs)
+                    #If it's unique enough keep it
+                    if torch.max(sim_scores).item() < Config.SIMILARITY_THRESHOLD:
+                        selected.append(cand)
+                        
         del embedder
         clear_memory()
 
@@ -207,7 +228,7 @@ def process_media(file_path, progress=gr.Progress()):
             master_clip.close()
         else:
             for i, hook in enumerate(selected):
-                path = session_dir / f"clip_{i+1}.mp3"
+                path = session_dir / f"clip {i+1}.mp3"
                 duration = hook['end'] - hook['start']
                 
                 cmd = [
