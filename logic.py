@@ -146,8 +146,15 @@ def process_media(file_path, progress=gr.Progress()):
                 'end': s.end, 
                 'speaker': speaker_label
             })
-            current_progress = 0.2 + (s.end / total_duration * 0.5) 
-            progress(min(current_progress, 0.74), desc=f"Transcribing: {int(s.end)}s / {int(total_duration)}s")
+            
+            #Calculate current progress
+            current_progress = min(0.2 + (s.end / total_duration * 0.54), 0.74) 
+            
+            #Calculate explicit percentage for the description text
+            pct = int(current_progress * 100)
+            
+            #Pass the float to update the bar, and explicit text for the sub-label
+            progress(current_progress, desc=f"Transcribing ({pct}%): {int(s.end)}s / {int(total_duration)}s")
 
         del batched_model, base_model
         clear_memory()
