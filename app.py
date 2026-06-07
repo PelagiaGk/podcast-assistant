@@ -51,7 +51,6 @@ def show_loading():
 
 def handle_pipeline_results(transcript_text, path1, path2, path3, sess1, sess2):
     """Evaluates pipeline outputs, reveals section heading, and updates clips."""
-    #Determine if any viral clips were actually returned
     has_clips = any([path1, path2, path3])
     
     return (
@@ -94,13 +93,16 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600))
             )
             run_btn = gr.Button("Process Media", variant="primary")
             
-        with gr.Column(scale=2):
-            transcript = gr.Textbox(label="Transcript", lines=12)
+    #Hidden placeholder backend state for transcript data 
+    transcript = gr.Textbox(label="Transcript", visible=False)
 
-    clips_header = gr.Markdown("### Selected Viral Clips", visible=False)
-    
+    #Spinner/Analysis Progress bar below the submission inputs
     spinner = gr.HTML(value=SPINNER_HTML, visible=False)
     
+    #Extracted Viral segments header
+    clips_header = gr.Markdown("### Selected Viral Clips", visible=False)
+    
+    #Clips container displayed directly above the termination panel
     with gr.Row():
         c1 = gr.File(label="Clip 1", visible=False)
         c2 = gr.File(label="Clip 2", visible=False)
