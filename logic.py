@@ -188,35 +188,36 @@ def process_media(file_path, progress=gr.Progress()):
                     })
         
         #Filter and rank items with a valid score
-        ranked = sorted([w for w in windows if w['score'] > 0.5], key=lambda x: x['score'], reverse=True)
+        score_cutoff = getattr(Config, 'SCORE_THRESHOLD', 0.35)
+        ranked = sorted([w for w in windows if w['score'] > score_cutoff], key=lambda x: x['score'], reverse=True)
         
         selected = []
-        if ranked:
-            for cand in ranked:
-                if len(selected) >= 3: 
+        for cand in ranked:
+            if len(selected) >= 3: 
+                break
+                
+            #Check for timeline overlap
+            time_overlap = False
+            for sel in selected:
+                if max(cand['start'], sel['start']) < min(cand['end'], sel['end']):
+                    time_overlap = True
                     break
-                #Prevent choosing clips that physically overlap in time
-                time_overlap = False
-                for sel in selected:
-                    #Check if timelines intersect
-                    if max(cand['start'], sel['start']) < min(cand['end'], sel['end']):
-                        time_overlap = True
-                        break
-                if time_overlap:
-                    continue
+            
+            if time_overlap:
+                continue
 
-                #Semantic Similarity Check
-                if len(selected) == 0:
+            #Semantic Diversity Check
+            if len(selected) == 0:
+                selected.append(cand)
+            else:
+                cand_emb = embedder.encode(cand['text'], convert_to_tensor=True)
+                sel_embs = embedder.encode([s['text'] for s in selected], convert_to_tensor=True)
+                
+                sim_scores = util.cos_sim(cand_emb, sel_embs)
+                #Ensure it's not a semantic duplicate
+                similarity_limit = getattr(Config, 'SIMILARITY_THRESHOLD', 0.65)
+                if torch.max(sim_scores).item() < similarity_limit:
                     selected.append(cand)
-                else:
-                    #Encode current candidate text and existing selected texts dynamically
-                    cand_emb = embedder.encode(cand['text'], convert_to_tensor=True)
-                    sel_embs = embedder.encode([s['text'] for s in selected], convert_to_tensor=True)
-                    
-                    sim_scores = util.cos_sim(cand_emb, sel_embs)
-                    #If it's unique enough keep it
-                    if torch.max(sim_scores).item() < Config.SIMILARITY_THRESHOLD:
-                        selected.append(cand)
                         
         del embedder
         clear_memory()
