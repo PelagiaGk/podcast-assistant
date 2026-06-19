@@ -162,7 +162,7 @@ def process_media(file_path, progress=gr.Progress()):
         if not processed_segs:
             return "Error\nNo dialogue transcribed from the media source.", None, None, None, str(session_dir), str(session_dir)
 
-        #Semantic Window Search
+        # Semantic Window Search
         progress(0.75, desc="Analyzing content for viral clips...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         
@@ -171,17 +171,21 @@ def process_media(file_path, progress=gr.Progress()):
             curr_text, word_count, actual_start = [], 0, processed_segs[i]['start']
             for j in range(i, len(processed_segs)):
                 seg = processed_segs[j]
-                if (seg['end'] - actual_start) > Config.MAX_CLIP_DURATION: break
+                
+                #Stop expanding if this segment pushes the clip over the maximum duration limit
+                if (seg['end'] - actual_start) > Config.MAX_CLIP_DURATION: 
+                    break
+                    
                 curr_text.append(f"[{seg['speaker']}] {seg['text']}")
                 word_count += len(seg['text'].split())
+                
+                #Record a window if it's a valid sentence ending, but DON'T break.
                 if word_count >= Config.MIN_WORDS_FOR_HOOK and seg['text'].strip().endswith(('.', '!', '?')):
-                    windows.append({'text': " ".join(curr_text), 'start': actual_start, 'end': seg['end']})
-                    break
-
-        scores, labels = get_optimized_scores(windows, embedder)
-
-        for i, w in enumerate(windows):
-            w['score'], w['label'] = scores[i], labels[i]
+                    windows.append({
+                        'text': " ".join(curr_text), 
+                        'start': actual_start, 
+                        'end': seg['end']
+                    })
         
         #Filter and rank items with a valid score
         ranked = sorted([w for w in windows if w['score'] > 0.5], key=lambda x: x['score'], reverse=True)
