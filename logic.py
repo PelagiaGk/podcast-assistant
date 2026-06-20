@@ -170,20 +170,13 @@ def process_media(file_path, progress=gr.Progress()):
         
         windows = []
         for i in range(len(processed_segs)):
-            #Establish absolute initial fallback start
-            fallback_start = processed_segs[i]['start']
-            #If word data exists, anchor perfectly to the first word spoken in this phrase block
-            if processed_segs[i]['words']:
-                actual_start = processed_segs[i]['words'][0]['start']
-            else:
-                actual_start = fallback_start
-
             curr_text, word_count = [], 0
+            #Explicitly force float copying to prevent loop indexing pointer corruption
+            actual_start = float(processed_segs[i]['start'])
+            
             for j in range(i, len(processed_segs)):
                 seg = processed_segs[j]
-                
-                #Use the segment's precise final word end if available
-                precise_end = seg['words'][-1]['end'] if seg['words'] else seg['end']
+                precise_end = float(seg['end'])
                 
                 if (precise_end - actual_start) > Config.MAX_CLIP_DURATION: 
                     break
@@ -192,10 +185,14 @@ def process_media(file_path, progress=gr.Progress()):
                 word_count += len(seg['text'].split())
                 
                 if word_count >= Config.MIN_WORDS_FOR_HOOK and seg['text'].strip().endswith(('.', '!', '?')):
+                    #Apply explicit media container timeline padding to prevent missing trailing syllables
+                    padded_start = max(0.0, actual_start - 0.4) 
+                    padded_end = precise_end + 0.5
+                    
                     windows.append({
                         'text': " ".join(curr_text), 
-                        'start': max(0, actual_start - 0.2), 
-                        'end': precise_end + 0.1             
+                        'start': padded_start, 
+                        'end': padded_end
                     })
 
         scores, labels = get_optimized_scores(windows, embedder)
