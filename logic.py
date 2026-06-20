@@ -10,7 +10,7 @@ import shutil
 import tempfile
 import subprocess
 from pathlib import Path
-from faster_whisper import WhisperModel, BatchedInferencePipeline
+from faster_whisper import WhisperModel  # Removed BatchedInferencePipeline
 from sentence_transformers import SentenceTransformer, util
 from config import Config
 import gradio as gr
@@ -126,12 +126,15 @@ def process_media(file_path, progress=gr.Progress()):
         else:
             processing_path = file_path
 
-        #Batched Whisper Pipeline on CPU/GPU with Word Timestamps
+        #Standard Whisper pipeline to guarantee phrase-boundary timestamps
         progress(0.2, desc="Starting Transcription...")
         base_model = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
-        batched_model = BatchedInferencePipeline(base_model)
         
-        segments_gen, info = batched_model.transcribe(processing_path, vad_filter=True, batch_size=16, word_timestamps=True)
+        segments_gen, info = base_model.transcribe(
+            processing_path, 
+            vad_filter=True, 
+            vad_parameters=dict(min_silence_duration_ms=700) # Prevents mid-sentence fragmenting
+        )
         
         processed_segs = []
         speaker_turns = []
@@ -141,24 +144,18 @@ def process_media(file_path, progress=gr.Progress()):
             speaker_label = f"Speaker {1 if len(speaker_turns) % 2 == 0 else 2}"
             speaker_turns.append({'start': s.start, 'end': s.end, 'speaker': speaker_label})
             
-            #Keep track of individual words for precise cutting borders
-            words_list = []
-            if hasattr(s, 'words') and s.words:
-                words_list = [{'word': w.word, 'start': w.start, 'end': w.end} for w in s.words]
-            
             processed_segs.append({
                 'text': s.text.strip(), 
                 'start': s.start, 
                 'end': s.end, 
-                'speaker': speaker_label,
-                'words': words_list  #Store the granular word data
+                'speaker': speaker_label
             })
             
             current_progress = min(0.2 + (s.end / total_duration * 0.54), 0.74) 
             pct = int(current_progress * 100)
             progress(current_progress, desc=f"Transcribing ({pct}%): {int(s.end)}s / {int(total_duration)}s")
 
-        del batched_model, base_model
+        del base_model
         clear_memory()
 
         if not processed_segs:
@@ -171,7 +168,6 @@ def process_media(file_path, progress=gr.Progress()):
         windows = []
         for i in range(len(processed_segs)):
             curr_text, word_count = [], 0
-            #Explicitly force float copying to prevent loop indexing pointer corruption
             actual_start = float(processed_segs[i]['start'])
             
             for j in range(i, len(processed_segs)):
@@ -187,14 +183,14 @@ def process_media(file_path, progress=gr.Progress()):
                 if word_count >= Config.MIN_WORDS_FOR_HOOK and seg['text'].strip().endswith(('.', '!', '?')):
                     #Apply explicit media container timeline padding to prevent missing trailing syllables
                     padded_start = max(0.0, actual_start - 0.4) 
-                    padded_end = precise_end + 0.5
+                    padded_end = precise_end + 0.6
                     
                     windows.append({
                         'text': " ".join(curr_text), 
                         'start': padded_start, 
                         'end': padded_end
                     })
-
+        
         scores, labels = get_optimized_scores(windows, embedder)
         for i, w in enumerate(windows):
             w['score'], w['label'] = scores[i], labels[i]
