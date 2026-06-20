@@ -126,7 +126,7 @@ def process_media(file_path, progress=gr.Progress()):
         else:
             processing_path = file_path
 
-        #Batched Whisper Pipeline on CPU
+        #Batched Whisper Pipeline
         progress(0.2, desc="Starting Transcription...")
         base_model = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
         batched_model = BatchedInferencePipeline(base_model)
@@ -147,13 +147,8 @@ def process_media(file_path, progress=gr.Progress()):
                 'speaker': speaker_label
             })
             
-            #Calculate current progress
             current_progress = min(0.2 + (s.end / total_duration * 0.54), 0.74) 
-            
-            #Calculate explicit percentage for the description text
             pct = int(current_progress * 100)
-            
-            #Pass the float to update the bar, and explicit text for the sub-label
             progress(current_progress, desc=f"Transcribing ({pct}%): {int(s.end)}s / {int(total_duration)}s")
 
         del batched_model, base_model
@@ -162,28 +157,53 @@ def process_media(file_path, progress=gr.Progress()):
         if not processed_segs:
             return "Error\nNo dialogue transcribed from the media source.", None, None, None, str(session_dir), str(session_dir)
 
-        #Semantic Window Search
+        #Elastic Semantic Window Generation
         progress(0.75, desc="Analyzing content for viral clips...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         
+        #Fallbacks if properties don't exist in config
+        min_dur = getattr(Config, 'MIN_CLIP_DURATION', 15.0)
+        max_dur = getattr(Config, 'MAX_CLIP_DURATION', 60.0)
+        max_overlap_pct = getattr(Config, 'MAX_OVERLAP_PCT', 0.40) #Allow up to 40% timeline overlap
+        
         windows = []
         for i in range(len(processed_segs)):
-            curr_text, word_count, actual_start = [], 0, processed_segs[i]['start']
+            curr_text = []
+            actual_start = processed_segs[i]['start']
+            
             for j in range(i, len(processed_segs)):
                 seg = processed_segs[j]
-                if (seg['end'] - actual_start) > Config.MAX_CLIP_DURATION: break
-                curr_text.append(f"[{seg['speaker']}] {seg['text']}")
-                word_count += len(seg['text'].split())
-                if word_count >= Config.MIN_WORDS_FOR_HOOK and seg['text'].strip().endswith(('.', '!', '?')):
-                    windows.append({'text': " ".join(curr_text), 'start': actual_start, 'end': seg['end']})
+                current_duration = seg['end'] - actual_start
+                
+                if current_duration > max_dur:
+                    #Split into a distinct second clip if it holds enough context
+                    if len(curr_text) > 2:
+                        half_way = len(curr_text) // 2
+                        split_text = curr_text[half_way:]
+                        split_start = processed_segs[i + half_way]['start']
+                        windows.append({
+                            'text': " ".join(split_text),
+                            'start': split_start,
+                            'end': seg['end']
+                        })
                     break
+                
+                curr_text.append(f"[{seg['speaker']}] {seg['text']}")
+                
+                #Check elastic boundary rules: must meet min duration AND land on a natural sentence end
+                if current_duration >= min_dur and seg['text'].strip().endswith(('.', '!', '?')):
+                    windows.append({
+                        'text': " ".join(curr_text), 
+                        'start': actual_start, 
+                        'end': seg['end']
+                    })
+                    #Do NOT break here anymore. Let it continue searching to build longer options if the semantic flow stays high quality.
 
         scores, labels = get_optimized_scores(windows, embedder)
 
         for i, w in enumerate(windows):
             w['score'], w['label'] = scores[i], labels[i]
         
-        #Filter and rank items with a valid score
         ranked = sorted([w for w in windows if w['score'] > 0.5], key=lambda x: x['score'], reverse=True)
         
         selected = []
@@ -191,13 +211,24 @@ def process_media(file_path, progress=gr.Progress()):
             for cand in ranked:
                 if len(selected) >= 3: 
                     break
-                #Prevent choosing clips that physically overlap in time
+                
+                #Elastic overlapping logic instead of total exclusion
                 time_overlap = False
+                cand_dur = cand['end'] - cand['start']
+                
                 for sel in selected:
-                    #Check if timelines intersect
-                    if max(cand['start'], sel['start']) < min(cand['end'], sel['end']):
-                        time_overlap = True
-                        break
+                    sel_dur = sel['end'] - sel['start']
+                    overlap_time = min(cand['end'], sel['end']) - max(cand['start'], sel['start'])
+                    
+                    if overlap_time > 0:
+                        #Calculate what percentage of either clip is shared
+                        cand_overlap_ratio = overlap_time / cand_dur
+                        sel_overlap_ratio = overlap_time / sel_dur
+                        
+                        if cand_overlap_ratio > max_overlap_pct or sel_overlap_ratio > max_overlap_pct:
+                            time_overlap = True
+                            break
+                            
                 if time_overlap:
                     continue
 
@@ -205,12 +236,10 @@ def process_media(file_path, progress=gr.Progress()):
                 if len(selected) == 0:
                     selected.append(cand)
                 else:
-                    #Encode current candidate text and existing selected texts dynamically
                     cand_emb = embedder.encode(cand['text'], convert_to_tensor=True)
                     sel_embs = embedder.encode([s['text'] for s in selected], convert_to_tensor=True)
                     
                     sim_scores = util.cos_sim(cand_emb, sel_embs)
-                    #If it's unique enough keep it
                     if torch.max(sim_scores).item() < Config.SIMILARITY_THRESHOLD:
                         selected.append(cand)
                         
@@ -235,7 +264,7 @@ def process_media(file_path, progress=gr.Progress()):
             master_clip.close()
         else:
             for i, hook in enumerate(selected):
-                path = session_dir / f"clip {i+1}.mp3"
+                path = session_dir / f"clip_{i+1}.mp3"
                 duration = hook['end'] - hook['start']
                 
                 cmd = [
