@@ -126,11 +126,12 @@ def process_media(file_path, progress=gr.Progress()):
         else:
             processing_path = file_path
 
-        #Batched Whisper Pipeline on CPU
+        #Batched Whisper Pipeline on CPU/GPU with Word Timestamps
         progress(0.2, desc="Starting Transcription...")
         base_model = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
         batched_model = BatchedInferencePipeline(base_model)
-        segments_gen, info = batched_model.transcribe(processing_path, vad_filter=True, batch_size=16)
+        
+        segments_gen, info = batched_model.transcribe(processing_path, vad_filter=True, batch_size=16, word_timestamps=True)
         
         processed_segs = []
         speaker_turns = []
@@ -140,11 +141,17 @@ def process_media(file_path, progress=gr.Progress()):
             speaker_label = f"Speaker {1 if len(speaker_turns) % 2 == 0 else 2}"
             speaker_turns.append({'start': s.start, 'end': s.end, 'speaker': speaker_label})
             
+            #Keep track of individual words for precise cutting borders
+            words_list = []
+            if hasattr(s, 'words') and s.words:
+                words_list = [{'word': w.word, 'start': w.start, 'end': w.end} for w in s.words]
+            
             processed_segs.append({
                 'text': s.text.strip(), 
                 'start': s.start, 
                 'end': s.end, 
-                'speaker': speaker_label
+                'speaker': speaker_label,
+                'words': words_list  #Store the granular word data
             })
             
             current_progress = min(0.2 + (s.end / total_duration * 0.54), 0.74) 
@@ -163,11 +170,22 @@ def process_media(file_path, progress=gr.Progress()):
         
         windows = []
         for i in range(len(processed_segs)):
-            curr_text, word_count, actual_start = [], 0, processed_segs[i]['start']
+            #Establish absolute initial fallback start
+            fallback_start = processed_segs[i]['start']
+            #If word data exists, anchor perfectly to the first word spoken in this phrase block
+            if processed_segs[i]['words']:
+                actual_start = processed_segs[i]['words'][0]['start']
+            else:
+                actual_start = fallback_start
+
+            curr_text, word_count = [], 0
             for j in range(i, len(processed_segs)):
                 seg = processed_segs[j]
                 
-                if (seg['end'] - actual_start) > Config.MAX_CLIP_DURATION: 
+                #Use the segment's precise final word end if available
+                precise_end = seg['words'][-1]['end'] if seg['words'] else seg['end']
+                
+                if (precise_end - actual_start) > Config.MAX_CLIP_DURATION: 
                     break
                     
                 curr_text.append(f"[{seg['speaker']}] {seg['text']}")
@@ -176,10 +194,10 @@ def process_media(file_path, progress=gr.Progress()):
                 if word_count >= Config.MIN_WORDS_FOR_HOOK and seg['text'].strip().endswith(('.', '!', '?')):
                     windows.append({
                         'text': " ".join(curr_text), 
-                        'start': actual_start, 
-                        'end': seg['end']
+                        'start': max(0, actual_start - 0.2), 
+                        'end': precise_end + 0.1             
                     })
-        
+
         scores, labels = get_optimized_scores(windows, embedder)
         for i, w in enumerate(windows):
             w['score'], w['label'] = scores[i], labels[i]
