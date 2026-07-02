@@ -369,20 +369,3 @@ def process_media(file_path, progress=gr.Progress()):
         error_md = f"Pipeline Execution Failed\n**Reason:** {str(e)}"
         return error_md, None, None, None, str(session_dir), str(session_dir)
         
-    finally:
-        if master_clip:
-            try:
-                master_clip.close()
-            except Exception:
-                pass
-        clear_memory()
-
-    except Exception as e:
-        if master_clip:
-            try:
-                master_clip.close()
-            except Exception:
-                pass
-        logger.exception("Critical unexpected error caught during processing pipeline execution:")
-        error_md = f"Pipeline Execution Failed\n**Reason:** {str(e)}"
-        return error_md, None, None, None, str(session_dir), str(session_dir)
