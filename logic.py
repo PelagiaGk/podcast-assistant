@@ -30,9 +30,9 @@ SENTENCE_ENDINGS = ('.', '!', '?')
 def safe_slice(clip, start_time, end_time):
     """Slices a MoviePy clip safely using explicit version compatibility checks."""
     if hasattr(clip, "subcut"):
-        return clip.subcut(start_time, end_time)   #Modern MoviePy v2.x
+        return clip.subcut(start_time, end_time)#Modern MoviePy v2.x
     elif hasattr(clip, "subclip"):
-        return clip.subclip(start_time, end_time)  #Legacy MoviePy v1.x
+        return clip.subclip(start_time, end_time)#Legacy MoviePy v1.x
     else:
         return clip
 
