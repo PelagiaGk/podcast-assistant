@@ -99,48 +99,75 @@ def _ends_on_sentence(text: str) -> bool:
     return text.strip().endswith(SENTENCE_ENDINGS)
 
 
-def build_windows(processed_segs, min_dur=20.0, max_dur=55.0):
+def build_windows(processed_segs, min_dur, ideal_max, hard_max):
     """
-    Candidate windows 20 to 55 seconds.
-    Filters out any candidate that doesn't terminate on a clean conversational 
-    boundary.
+    Scoring-based window generation.
+    Minimum duration, after passing it scores each potential cut point based on
+    textual punctuation and natural audio silence gaps.
     """
     windows = []
     n = len(processed_segs)
-    
-    for i in range(n):
+    i = 0
+
+    while i < n:
         anchor_start = processed_segs[i]['start']
         
+        best_cut_idx = None
+        best_cut_score = -9999
+        
         for j in range(i, n):
-            dur = processed_segs[j]['end'] - anchor_start
+            seg = processed_segs[j]
+            current_dur = seg['end'] - anchor_start
             
-            if dur < min_dur:
+            if current_dur < min_dur:
                 continue
                 
-            if dur > max_dur:
+            if current_dur > hard_max:
                 break
-            
-            ends_with_punctuation = _ends_on_sentence(processed_segs[j]['text'])
-            
-            has_natural_pause = False
-            if j == n - 1:
-                has_natural_pause = True 
-            else:
-                gap_duration = processed_segs[j+1]['start'] - processed_segs[j]['end']
-                if gap_duration >= 0.35:  
-                    has_natural_pause = True
-            
-            if ends_with_punctuation or has_natural_pause:
-                texts = [
-                    f"[{processed_segs[k]['speaker']}] {processed_segs[k]['text']}"
-                    for k in range(i, j + 1)
-                ]
-                windows.append({
-                    'text': " ".join(texts),
-                    'start': anchor_start,
-                    'end': processed_segs[j]['end'],
-                })
                 
+            is_sentence_end = _ends_on_sentence(seg['text'])
+            
+            gap_to_next = 0.0
+            if j + 1 < n:
+                gap_to_next = processed_segs[j+1]['start'] - seg['end']
+            else:
+                gap_to_next = 999.0 
+            
+            score = 0
+            if is_sentence_end:
+                score += 100
+            
+            if gap_to_next >= 0.4:
+                score += 50
+            elif gap_to_next >= 0.2:
+                score += 20
+            
+            if current_dur > ideal_max:
+                score -= (current_dur - ideal_max) * 2
+            
+            if score > best_cut_score:
+                best_cut_score = score
+                best_cut_idx = j
+                
+            if is_sentence_end and gap_to_next >= 0.4 and current_dur <= ideal_max:
+                best_cut_idx = j
+                break
+
+        if best_cut_idx is not None:
+            end_seg = processed_segs[best_cut_idx]
+            texts = [
+                f"[{processed_segs[k]['speaker']}] {processed_segs[k]['text']}"
+                for k in range(i, best_cut_idx + 1)
+            ]
+            windows.append({
+                'text': " ".join(texts),
+                'start': anchor_start,
+                'end': end_seg['end'],
+            })
+            i = best_cut_idx + 1 
+        else:
+            break
+            
     return windows
 
 @torch.inference_mode()
@@ -220,10 +247,11 @@ def process_media(file_path, progress=gr.Progress()):
         progress(0.75, desc="Analyzing content for promotional clips...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
 
-        min_dur = getattr(Config, 'MIN_CLIP_DURATION', 20.0)
-        max_dur = getattr(Config, 'MAX_CLIP_DURATION', 55.0)
+        min_dur = getattr(Config, 'MIN_CLIP_DURATION', 30.0) 
+        ideal_max = getattr(Config, 'MAX_CLIP_DURATION', 60.0)
+        hard_max = 90.0                                       
 
-        windows = build_windows(processed_segs, min_dur, max_dur)
+        windows = build_windows(processed_segs, min_dur, ideal_max, hard_max)
 
         if not windows:
             logger.warning("No windows generated — falling back to raw segment boundaries.")
