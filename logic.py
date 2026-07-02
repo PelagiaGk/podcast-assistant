@@ -85,7 +85,11 @@ def get_optimized_scores(windows, embedder, full_text, wav_path):
     semantic_scores = [util.cos_sim(w_emb, full_doc_embedding).item() for w_emb in window_embeddings]
     
     energies = [get_window_energy(wav_path, w['start'], w['end']) for w in windows]
+    
     max_energy = max(energies) if energies else 1.0
+    if max_energy <= 0:
+        max_energy = 1.0
+        
     normalized_energies = [e / max_energy for e in energies]
 
     return [(sem * 0.6) + (eng * 0.4) for sem, eng in zip(semantic_scores, normalized_energies)]
