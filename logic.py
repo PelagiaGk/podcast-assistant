@@ -243,13 +243,14 @@ def process_media(file_path, progress=gr.Progress()):
         if not processed_segs:
             return "Error\nNo dialogue transcribed from the media source.", None, None, None, str(session_dir), str(session_dir)
 
-        #Semantic Analysis 
+        #Semantic Analysis
         progress(0.75, desc="Analyzing content for promotional clips...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
 
         min_dur = getattr(Config, 'MIN_CLIP_DURATION', 30.0) 
         ideal_max = getattr(Config, 'MAX_CLIP_DURATION', 60.0)
         hard_max = 90.0                                       
+        max_overlap_pct = 0.25
 
         windows = build_windows(processed_segs, min_dur, ideal_max, hard_max)
 
@@ -314,32 +315,38 @@ def process_media(file_path, progress=gr.Progress()):
             master_clip = VideoFileClip(file_path)
             for i, hook in enumerate(selected):
                 path = session_dir / f"clip_{i+1}.mp4"
-                sub_clip = safe_slice(master_clip, hook['start'], hook['end'])
+                
+                padded_start = max(0.0, hook['start'] - 0.15)
+                padded_end = min(hook['end'] + 0.4, master_clip.duration or total_duration)
+                
+                sub_clip = safe_slice(master_clip, padded_start, padded_end)
+                
                 sub_clip.write_videofile(
                     str(path), codec="libx264", audio_codec="aac",
                     audio_bitrate="320k",
-                    temp_audiofile=str(session_dir / "temp.m4a"),
+                    temp_audiofile=str(session_dir / f"temp_audio_{i}.m4a"),
                     remove_temp=True, logger=None,
                 )
                 sub_clip.close()
                 clips.append(str(path))
             master_clip.close()
+            
         else:
             for i, hook in enumerate(selected):
                 path = session_dir / f"clip_{i+1}.mp3"
                 
-                raw_duration = hook['end'] - hook['start']
+                padded_start = max(0.0, hook['start'] - 0.15)
                 padded_end = min(hook['end'] + 0.4, total_duration)
-                export_duration = padded_end - hook['start']
+                export_duration = padded_end - padded_start
                 
                 fade_start = max(0.0, export_duration - 0.4)
 
                 cmd = [
                     "ffmpeg", "-y",
-                    "-ss", str(hook['start']),
+                    "-ss", str(padded_start),
                     "-t",  str(export_duration),
                     "-i",  str(file_path), 
-                    "-filter_complex", f"afade=t=out:st={fade_start}:d=0.4", 
+                    "-filter_complex", f"afade=t=in:st=0:d=0.15,afade=t=out:st={fade_start}:d=0.4", 
                     "-acodec", "libmp3lame",
                     "-b:a", "320k",    
                     str(path),
@@ -356,6 +363,19 @@ def process_media(file_path, progress=gr.Progress()):
             f"Successfully extracted {len(clips)} highly relevant viral clip(s)."
         )
         return status_summary, clip1, clip2, clip3, str(session_dir), str(session_dir)
+
+    except Exception as e:
+        logger.exception("Critical unexpected error caught during processing pipeline execution:")
+        error_md = f"Pipeline Execution Failed\n**Reason:** {str(e)}"
+        return error_md, None, None, None, str(session_dir), str(session_dir)
+        
+    finally:
+        if master_clip:
+            try:
+                master_clip.close()
+            except Exception:
+                pass
+        clear_memory()
 
     except Exception as e:
         if master_clip:
