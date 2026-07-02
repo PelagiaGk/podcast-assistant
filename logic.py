@@ -99,55 +99,48 @@ def _ends_on_sentence(text: str) -> bool:
     return text.strip().endswith(SENTENCE_ENDINGS)
 
 
-def build_windows(processed_segs, min_dur, ideal_max, hard_max):
+def build_windows(processed_segs, min_dur=20.0, max_dur=55.0):
     """
-    Natural punctuation conclusion within the ideal range.
-    If no punctuation is found (run-on speech), it forces a clean break at a natural 
-    audio pause before hitting the absolute 'hard_max'.
+    Candidate windows 20 to 55 seconds.
+    Filters out any candidate that doesn't terminate on a clean conversational 
+    boundary.
     """
     windows = []
     n = len(processed_segs)
-    i = 0
-
-    while i < n:
+    
+    for i in range(n):
         anchor_start = processed_segs[i]['start']
-        best_cut_idx = None
-        forced_cut_idx = None
         
         for j in range(i, n):
-            seg = processed_segs[j]
-            current_dur = seg['end'] - anchor_start
+            dur = processed_segs[j]['end'] - anchor_start
             
-            is_sentence_end = _ends_on_sentence(seg['text'])
-            
-            if current_dur >= min_dur:
-                if is_sentence_end:
-                    best_cut_idx = j
-                forced_cut_idx = j 
-
-            if current_dur >= ideal_max and best_cut_idx is not None:
-                break
+            if dur < min_dur:
+                continue
                 
-            if current_dur >= hard_max:
+            if dur > max_dur:
                 break
-
-        final_cut_idx = best_cut_idx if best_cut_idx is not None else forced_cut_idx
-        
-        if final_cut_idx is not None:
-            end_seg = processed_segs[final_cut_idx]
-            texts = [
-                f"[{processed_segs[k]['speaker']}] {processed_segs[k]['text']}"
-                for k in range(i, final_cut_idx + 1)
-            ]
-            windows.append({
-                'text': " ".join(texts),
-                'start': anchor_start,
-                'end': end_seg['end'],
-            })
-            i = final_cut_idx + 1  
-        else:
-            i += 1
             
+            ends_with_punctuation = _ends_on_sentence(processed_segs[j]['text'])
+            
+            has_natural_pause = False
+            if j == n - 1:
+                has_natural_pause = True 
+            else:
+                gap_duration = processed_segs[j+1]['start'] - processed_segs[j]['end']
+                if gap_duration >= 0.35:  
+                    has_natural_pause = True
+            
+            if ends_with_punctuation or has_natural_pause:
+                texts = [
+                    f"[{processed_segs[k]['speaker']}] {processed_segs[k]['text']}"
+                    for k in range(i, j + 1)
+                ]
+                windows.append({
+                    'text': " ".join(texts),
+                    'start': anchor_start,
+                    'end': processed_segs[j]['end'],
+                })
+                
     return windows
 
 @torch.inference_mode()
@@ -227,11 +220,10 @@ def process_media(file_path, progress=gr.Progress()):
         progress(0.75, desc="Analyzing content for promotional clips...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
 
-        min_dur = getattr(Config, 'MIN_CLIP_DURATION', 15.0)
-        ideal_max = getattr(Config, 'MAX_CLIP_DURATION', 60.0)
-        hard_max = 120.0  
+        min_dur = getattr(Config, 'MIN_CLIP_DURATION', 20.0)
+        max_dur = getattr(Config, 'MAX_CLIP_DURATION', 55.0)
 
-        windows = build_windows(processed_segs, min_dur, ideal_max, hard_max)
+        windows = build_windows(processed_segs, min_dur, max_dur)
 
         if not windows:
             logger.warning("No windows generated — falling back to raw segment boundaries.")
