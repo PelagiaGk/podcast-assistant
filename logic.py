@@ -173,16 +173,25 @@ def process_media(file_path, progress=gr.Progress()):
         base_model = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
         batched_model = BatchedInferencePipeline(base_model)
         
-        segments_gen, info = batched_model.transcribe(transcription_ready_audio, vad_filter=True, batch_size=16)
+        segments_gen, info = batched_model.transcribe(
+            transcription_ready_audio, 
+            vad_filter=True, 
+            vad_parameters=dict(threshold=0.6), 
+            batch_size=16,
+            condition_on_previous_text=False 
+        )
 
         processed_segs = []
         for s in segments_gen:
-            if s.no_speech_prob > 0.45:
+            if s.no_speech_prob > 0.35 or s.avg_logprob < -1.0:
                 continue
                 
             clean_text = re.sub(r'\[.*?\]|\(.*?\)|\♪', '', s.text).strip()
             
-            if not clean_text:
+            hallucinations = ["thank you", "bye", "subscribe", "subtitles", "you"]
+            clean_lower = clean_text.lower().strip('.!?,; ')
+            
+            if not clean_text or clean_lower in hallucinations:
                 continue
                 
             processed_segs.append({
