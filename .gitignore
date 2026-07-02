@@ -46,3 +46,5 @@ gradio_cached_examples/
 audio_only_version/
 app1.py
 logic1.py
+
+config.local.py
