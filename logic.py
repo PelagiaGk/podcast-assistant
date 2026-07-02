@@ -101,8 +101,8 @@ def _ends_on_sentence(text: str) -> bool:
 
 def build_windows(processed_segs, min_dur, max_dur):
     """
-    Candidate windows with strict promotional duration enforcement.
-    Clips won't exceed max_dur.
+    Complete the final sentence cleanly, allowing the clip 
+    to gently exceed max_dur if necessary to avoid an unnatural cut.
     """
     windows = []
     n = len(processed_segs)
@@ -111,16 +111,15 @@ def build_windows(processed_segs, min_dur, max_dur):
     while i < n:
         anchor_start = processed_segs[i]['start']
         best_end_idx = None
-
+        
         for j in range(i, n):
             seg = processed_segs[j]
             current_dur = seg['end'] - anchor_start
-
-            if current_dur > max_dur:
-                break
-
+            
             if current_dur >= min_dur and _ends_on_sentence(seg['text']):
                 best_end_idx = j
+                if current_dur >= max_dur:
+                    break
 
         if best_end_idx is None:
             for j in range(i, n):
@@ -142,7 +141,7 @@ def build_windows(processed_segs, min_dur, max_dur):
                 'start': anchor_start,
                 'end': end_seg['end'],
             })
-            i = best_end_idx + 1
+            i = best_end_idx + 1 
         else:
             i += 1
 
