@@ -25,8 +25,19 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-SENTENCE_ENDINGS = ('.', '!', '?')
+SENTENCE_ENDINGS = (
+    '.', '!', '?', ';',       
+    '。', '！', '？',         
+    '؟', '۔',                 
+    '।', '॥',                 
+    '։', '՜', '՞'             
+)
 
+def _ends_on_sentence(text: str) -> bool:
+    """Return True if the text ends with any sentence ending."""
+    if not text:
+        return False
+    return text.strip().endswith(SENTENCE_ENDINGS)
 
 def safe_slice(clip, start_time, end_time):
     """Slices a MoviePy clip safely using explicit version compatibility checks."""
@@ -36,7 +47,6 @@ def safe_slice(clip, start_time, end_time):
         return clip.subclip(start_time, end_time)#Legacy MoviePy v1.x
     else:
         return clip
-
 
 def clear_memory():
     """Aggressively flushes RAM and VRAM to prevent web server crashes on weak CPUs."""
@@ -93,17 +103,10 @@ def get_optimized_scores(windows, embedder, full_text, wav_path):
 
     return final_scores
 
-
-def _ends_on_sentence(text: str) -> bool:
-    """Return True if the text ends with any of SENTENCE_ENDINGS."""
-    return text.strip().endswith(SENTENCE_ENDINGS)
-
-
 def build_windows(processed_segs, min_dur, ideal_max, hard_max):
     """
-    Scoring-based window generation.
-    Minimum duration, after passing it scores each potential cut point based on
-    textual punctuation and natural audio silence gaps.
+    Window generation, with semantic prioritization. 
+    Cuts on grammatical boundaries unless forced to use acoustic pauses.
     """
     windows = []
     n = len(processed_segs)
@@ -112,8 +115,7 @@ def build_windows(processed_segs, min_dur, ideal_max, hard_max):
     while i < n:
         anchor_start = processed_segs[i]['start']
         
-        best_cut_idx = None
-        best_cut_score = -9999
+        candidates = []
         
         for j in range(i, n):
             seg = processed_segs[j]
@@ -125,48 +127,40 @@ def build_windows(processed_segs, min_dur, ideal_max, hard_max):
             if current_dur > hard_max:
                 break
                 
-            is_sentence_end = _ends_on_sentence(seg['text'])
+            gap_to_next = processed_segs[j+1]['start'] - seg['end'] if j + 1 < n else 999.0 
             
-            gap_to_next = 0.0
-            if j + 1 < n:
-                gap_to_next = processed_segs[j+1]['start'] - seg['end']
-            else:
-                gap_to_next = 999.0 
-            
-            score = 0
-            if is_sentence_end:
-                score += 100
-            
-            if gap_to_next >= 0.4:
-                score += 50
-            elif gap_to_next >= 0.2:
-                score += 20
-            
-            if current_dur > ideal_max:
-                score -= (current_dur - ideal_max) * 2
-            
-            if score > best_cut_score:
-                best_cut_score = score
-                best_cut_idx = j
-                
-            if is_sentence_end and gap_to_next >= 0.4 and current_dur <= ideal_max:
-                best_cut_idx = j
-                break
-
-        if best_cut_idx is not None:
-            end_seg = processed_segs[best_cut_idx]
-            texts = [
-                f"[{processed_segs[k]['speaker']}] {processed_segs[k]['text']}"
-                for k in range(i, best_cut_idx + 1)
-            ]
-            windows.append({
-                'text': " ".join(texts),
-                'start': anchor_start,
-                'end': end_seg['end'],
+            candidates.append({
+                'index': j,
+                'duration': current_dur,
+                'is_sentence_end': _ends_on_sentence(seg['text']),
+                'gap': gap_to_next
             })
-            i = best_cut_idx + 1 
-        else:
+
+        if not candidates:
             break
+
+        sentence_ends = [c for c in candidates if c['is_sentence_end']]
+        
+        if sentence_ends:
+            best_cut = min(sentence_ends, key=lambda x: abs(x['duration'] - ideal_max))
+        else:
+            best_cut = max(candidates, key=lambda x: x['gap'])
+
+        best_cut_idx = best_cut['index']
+        end_seg = processed_segs[best_cut_idx]
+        
+        texts = [
+            f"[{processed_segs[k]['speaker']}] {processed_segs[k]['text']}"
+            for k in range(i, best_cut_idx + 1)
+        ]
+        
+        windows.append({
+            'text': " ".join(texts),
+            'start': anchor_start,
+            'end': end_seg['end'],
+        })
+        
+        i = best_cut_idx + 1 
             
     return windows
 
