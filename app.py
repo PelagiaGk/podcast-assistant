@@ -4,7 +4,8 @@ import tempfile
 import logging
 from pathlib import Path
 from config import Config
-from logic import process_media
+from logic import process_media, cleanup_session
+
 #Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -123,6 +124,17 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600))
         inputs=[transcript, c1, c2, c3, session_state, session_state],
         outputs=[spinner, clips_header, transcript, c1, c2, c3, session_state, session_state]
     )
+
+    #Cleanup trigger
+    done_btn.click(
+        fn=cleanup_session,
+        inputs=session_path
+    ).then(
+        fn=reset_ui,
+        outputs=[transcript, c1, c2, c3, media_in, session_state, spinner, clips_header]
+    )
+
+    demo.unload(fn=cleanup_session)
 
 if __name__ == "__main__":
     try:

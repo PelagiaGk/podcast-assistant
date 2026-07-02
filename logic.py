@@ -49,6 +49,17 @@ def clear_memory():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
+def cleanup_session(session_path):
+    """Deletes the specific session folder when the user clicks 'Done'."""
+    if session_path and os.path.exists(session_path):
+        try:
+            shutil.rmtree(session_path)
+            logger.info(f"User explicitly deleted session: {session_path}")
+        except Exception as e:
+            logger.error(f"Error deleting session {session_path}: {e}")
+    clear_memory()
+    return None, None, None, "", ""
+
 def cleanup_stale_sessions(max_age_hours=1):
     """Prevents storage exhaustion in public deployments by purging old sessions."""
     temp_dir = Path(tempfile.gettempdir())
@@ -157,7 +168,7 @@ def process_media(file_path, progress=gr.Progress()):
                 continue
                 
             processed_segs.append({'text': s.text.strip(), 'start': s.start, 'end': s.end, 'speaker': "Speaker"})
-            
+
         #Analysis
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         windows = build_windows(processed_segs, getattr(Config, 'MIN_CLIP_DURATION', 30.0), getattr(Config, 'MAX_CLIP_DURATION', 60.0), 90.0)
@@ -183,7 +194,16 @@ def process_media(file_path, progress=gr.Progress()):
             for i, hook in enumerate(selected):
                 path = session_dir / f"clip_{i+1}.mp4"
                 sub_clip = safe_slice(master_clip, max(0.0, hook['start'] - 0.15), min(hook['end'] + 0.1, master_clip.duration))
-                sub_clip.write_videofile(str(path), codec="libx264", audio_codec="aac", audio_bitrate="320k", logger=None)
+                
+                sub_clip.write_videofile(
+                    str(path), 
+                    codec="libx264", 
+                    audio_codec="aac", 
+                    audio_bitrate="320k", 
+                    audio_fps=48000, 
+                    preset="fast",
+                    logger=None
+                )
                 sub_clip.close()
                 clips.append(str(path))
         else:
@@ -191,9 +211,10 @@ def process_media(file_path, progress=gr.Progress()):
                 path = session_dir / f"clip_{i+1}.mp3"
                 start, end = max(0.0, hook['start'] - 0.15), min(hook['end'] + 0.1, info.duration)
                 fade_start = max(0.0, (end - start) - 0.1)
+                
                 cmd = ["ffmpeg", "-y", "-ss", str(start), "-t", str(end-start), "-i", str(file_path), 
                        "-filter_complex", f"afade=t=in:st=0:d=0.15,afade=t=out:st={fade_start}:d=0.1", 
-                       "-acodec", "libmp3lame", "-b:a", "320k", str(path)]
+                       "-acodec", "libmp3lame", "-b:a", "320k", "-ar", "48000", str(path)]
                 subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
                 clips.append(str(path))
 
