@@ -12,6 +12,7 @@ import gradio as gr
 from faster_whisper import WhisperModel, BatchedInferencePipeline
 from sentence_transformers import SentenceTransformer, util
 from config import Config
+import wave
 
 try:
     from moviepy import VideoFileClip, AudioFileClip
@@ -66,32 +67,31 @@ def get_intersection_speaker(seg_start, seg_end, speaker_turns):
     return best_speaker
 
 
-def get_optimized_scores(windows, embedder):
+def get_optimized_scores(windows, embedder, full_text, wav_path):
     if not windows:
-        return [], []
+        return []
 
-    anchor_embeddings = embedder.encode(Config.ANCHOR_THEMES, convert_to_tensor=True)
+    full_doc_embedding = embedder.encode(full_text, convert_to_tensor=True)
     window_texts = [w['text'] for w in windows]
     window_embeddings = embedder.encode(window_texts, convert_to_tensor=True)
+    
+    similarity_matrix = util.cos_sim(window_embeddings, full_doc_embedding)
+    semantic_scores = [sim[0].item() for sim in similarity_matrix]
 
-    similarity_matrix = util.cos_sim(window_embeddings, anchor_embeddings)
+    energies = [get_window_energy(wav_path, w['start'], w['end']) for w in windows]
+    
+    max_energy = max(energies) if energies else 1.0
+    if max_energy == 0: 
+        max_energy = 1.0
+        
+    normalized_energies = [e / max_energy for e in energies]
 
     final_scores = []
-    final_labels = []
+    for sem, eng in zip(semantic_scores, normalized_energies):
+        final_score = (sem * 0.6) + (eng * 0.4)
+        final_scores.append(final_score)
 
-    for i, window in enumerate(windows):
-        row_scores = similarity_matrix[i]
-        s_map = {label: row_scores[j].item() for j, label in enumerate(Config.ANCHOR_THEMES)}
-
-        score = sum(s_map[label] * Config.WEIGHTS[label] for label in Config.ANCHOR_THEMES)
-
-        best_theme_idx = torch.argmax(row_scores).item()
-        best_label = Config.ANCHOR_THEMES[best_theme_idx]
-
-        final_scores.append(score)
-        final_labels.append(best_label)
-
-    return final_scores, final_labels
+    return final_scores
 
 
 def _ends_on_sentence(text: str) -> bool:
@@ -170,6 +170,30 @@ def build_windows(processed_segs, min_dur, ideal_max, hard_max):
             
     return windows
 
+def get_window_energy(wav_path, start_time, end_time):
+    """Calculates the acoustic energy of an audio segment."""
+    try:
+        with wave.open(wav_path, 'rb') as wf:
+            sr = wf.getframerate()
+            start_frame = int(start_time * sr)
+            end_frame = int(end_time * sr)
+            
+            wf.setpos(start_frame)
+            frames = wf.readframes(end_frame - start_frame)
+            
+            #Convert binary PCM data to a numpy array of 16-bit integers
+            audio_data = np.frombuffer(frames, dtype=np.int16)
+            
+            if len(audio_data) == 0:
+                return 0.0
+                
+            #Calculate Root Mean Square to measure audio energy
+            rms = np.sqrt(np.mean(audio_data.astype(np.float64)**2))
+            return rms
+    except Exception as e:
+        logger.warning(f"Failed to calculate audio energy: {e}")
+        return 0.0
+
 @torch.inference_mode()
 def process_media(file_path, progress=gr.Progress()):
     if not file_path or not os.path.exists(file_path):
@@ -243,14 +267,14 @@ def process_media(file_path, progress=gr.Progress()):
         if not processed_segs:
             return "Error\nNo dialogue transcribed from the media source.", None, None, None, str(session_dir), str(session_dir)
 
-        #Semantic Analysis
+        #Semantic Analysis 
         progress(0.75, desc="Analyzing content for promotional clips...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
 
         min_dur = getattr(Config, 'MIN_CLIP_DURATION', 30.0) 
         ideal_max = getattr(Config, 'MAX_CLIP_DURATION', 60.0)
         hard_max = 90.0                                       
-        max_overlap_pct = 0.25
+        max_overlap_pct = 0.25 
 
         windows = build_windows(processed_segs, min_dur, ideal_max, hard_max)
 
@@ -262,12 +286,16 @@ def process_media(file_path, progress=gr.Progress()):
                 'end': s['end'],
             } for s in processed_segs]
 
-        scores, labels = get_optimized_scores(windows, embedder)
+        full_transcript = " ".join([s['text'] for s in processed_segs])
+
+        scores = get_optimized_scores(windows, embedder, full_transcript, transcription_ready_audio)
+        
         for i, w in enumerate(windows):
-            w['score'], w['label'] = scores[i], labels[i]
+            w['score'] = scores[i]
+            w['label'] = "High Energy Core" 
 
         ranked = sorted(
-            [w for w in windows if w['score'] > 0.5],
+            [w for w in windows if w['score'] > 0.4], 
             key=lambda x: x['score'],
             reverse=True,
         )
