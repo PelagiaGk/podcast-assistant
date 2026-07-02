@@ -8,7 +8,7 @@ import logging
 import gc
 import shutil
 import tempfile
-import subprocess
+import subprocess-
 from pathlib import Path
 from faster_whisper import WhisperModel, BatchedInferencePipeline
 from sentence_transformers import SentenceTransformer, util
@@ -100,80 +100,52 @@ def _ends_on_sentence(text: str) -> bool:
     """Return True if the text ends with any of SENTENCE_ENDINGS."""
     return text.strip().endswith(SENTENCE_ENDINGS)
 
-
-def _find_sentence_boundary_end(processed_segs, from_idx, hard_limit_end):
+def build_windows(processed_segs, min_dur, max_dur):
     """
-    Starting from from_idx up to hard_limit_end seconds find
-    the nearest segment whose text ends on a proper sentence boundary.
-    Return the index of that segment, or the last segment before hard_limit_end
-    if no clean boundary is found.
-    """
-    best_idx = None
-    last_valid_idx = None
-
-    for k in range(from_idx, len(processed_segs)):
-        seg = processed_segs[k]
-        if seg['end'] > hard_limit_end:
-            break
-        last_valid_idx = k
-        if _ends_on_sentence(seg['text']):
-            best_idx = k
-
-    return best_idx if best_idx is not None else last_valid_idx
-
-
-def build_windows(processed_segs, min_dur, max_dur, grace_pct=0.20):
-    """
-    Candidate windows with strict sentence-boundary enforcement.
+    Candidate windows with strict maximum duration enforcement.
+    Clips will never exceed max_dur.
     """
     windows = []
-    i = 0
     n = len(processed_segs)
+    i = 0
 
     while i < n:
         anchor_start = processed_segs[i]['start']
-        committed = False
+        best_end_idx = None
 
         for j in range(i, n):
             seg = processed_segs[j]
             current_dur = seg['end'] - anchor_start
 
             if current_dur > max_dur:
-                grace_limit = anchor_start + max_dur * (1 + grace_pct)
-                boundary_idx = _find_sentence_boundary_end(
-                    processed_segs, j, grace_limit
-                )
-
-                if boundary_idx is not None and boundary_idx >= i:
-                    end_seg = processed_segs[boundary_idx]
-                    texts = [
-                        f"[{processed_segs[k]['speaker']}] {processed_segs[k]['text']}"
-                        for k in range(i, boundary_idx + 1)
-                    ]
-                    dur = end_seg['end'] - anchor_start
-                    if dur >= min_dur:
-                        windows.append({
-                            'text': " ".join(texts),
-                            'start': anchor_start,
-                            'end': end_seg['end'],
-                        })
-                        i = boundary_idx + 1  
-                        committed = True
                 break
 
             if current_dur >= min_dur and _ends_on_sentence(seg['text']):
-                texts = [
-                    f"[{processed_segs[k]['speaker']}] {processed_segs[k]['text']}"
-                    for k in range(i, j + 1)
-                ]
-                windows.append({
-                    'text': " ".join(texts),
-                    'start': anchor_start,
-                    'end': seg['end'],
-                })
-               
-        if not committed:
-            i += 1 
+                best_end_idx = j
+
+        if best_end_idx is None:
+            for j in range(i, n):
+                dur = processed_segs[j]['end'] - anchor_start
+                if dur <= max_dur:
+                    if dur >= min_dur:
+                        best_end_idx = j
+                else:
+                    break
+
+        if best_end_idx is not None:
+            end_seg = processed_segs[best_end_idx]
+            texts = [
+                f"[{processed_segs[k]['speaker']}] {processed_segs[k]['text']}"
+                for k in range(i, best_end_idx + 1)
+            ]
+            windows.append({
+                'text': " ".join(texts),
+                'start': anchor_start,
+                'end': end_seg['end'],
+            })
+            i = best_end_idx + 1  
+        else:
+            i += 1
 
     return windows
 
@@ -258,7 +230,7 @@ def process_media(file_path, progress=gr.Progress()):
         max_dur        = getattr(Config, 'MAX_CLIP_DURATION',  60.0)
         max_overlap_pct = getattr(Config, 'MAX_OVERLAP_PCT',   0.40)
 
-        windows = build_windows(processed_segs, min_dur, max_dur, grace_pct=0.20)
+        windows = build_windows(processed_segs, min_dur, max_dur)
 
         if not windows:
             logger.warning("No windows generated — falling back to raw segment boundaries.")
@@ -325,6 +297,7 @@ def process_media(file_path, progress=gr.Progress()):
                 sub_clip = safe_slice(master_clip, hook['start'], hook['end'])
                 sub_clip.write_videofile(
                     str(path), codec="libx264", audio_codec="aac",
+                    audio_bitrate="320k",
                     temp_audiofile=str(session_dir / "temp.m4a"),
                     remove_temp=True, logger=None,
                 )
@@ -339,23 +312,13 @@ def process_media(file_path, progress=gr.Progress()):
                     "ffmpeg", "-y",
                     "-ss", str(hook['start']),
                     "-t",  str(duration),
-                    "-i",  str(processing_path),
+                    "-i",  str(file_path), 
                     "-acodec", "libmp3lame",
-                    "-b:a", "192k",
+                    "-b:a", "320k",      
                     str(path),
                 ]
                 subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
                 clips.append(str(path))
-
-        clip1 = clips[0] if len(clips) > 0 else None
-        clip2 = clips[1] if len(clips) > 1 else None
-        clip3 = clips[2] if len(clips) > 2 else None
-
-        status_summary = (
-            f"Processing Complete!\n"
-            f"Successfully extracted {len(clips)} highly relevant viral clip(s)."
-        )
-        return status_summary, clip1, clip2, clip3, str(session_dir), str(session_dir)
 
     except Exception as e:
         if master_clip:
