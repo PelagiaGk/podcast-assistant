@@ -144,6 +144,14 @@ def build_windows(processed_segs, min_dur, ideal_max, hard_max):
         
     return windows
 
+  def get_speech_timestamps_from_file(wav_path):
+        model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad', force_reload=False)
+        (get_speech_timestamps, _, read_audio, _, _) = utils
+    
+        wav = read_audio(wav_path)
+         speech_timestamps = get_speech_timestamps(wav, model, sampling_rate=16000, threshold=0.5)
+        return speech_timestamps
+
 @torch.inference_mode()
 def process_media(file_path, progress=gr.Progress()):
     if not file_path or not os.path.exists(file_path):
@@ -156,6 +164,7 @@ def process_media(file_path, progress=gr.Progress()):
     session_dir.mkdir(parents=True, exist_ok=True)
     
     transcription_ready_audio = str(session_dir / "transcribe_low_res.wav")
+    speech_intervals = get_speech_timestamps_from_file(transcription_ready_audio)
     master_clip = None
 
     try:
@@ -183,23 +192,12 @@ def process_media(file_path, progress=gr.Progress()):
 
         processed_segs = []
         for s in segments_gen:
-            if s.no_speech_prob > 0.35 or s.avg_logprob < -1.0:
-                continue
-                
-            clean_text = re.sub(r'\[.*?\]|\(.*?\)|\♪', '', s.text).strip()
+            is_valid = any(s.start < interval['end'] and s.end > interval['start'] for interval in speech_intervals)
             
-            hallucinations = ["thank you", "bye", "subscribe", "subtitles", "you"]
-            clean_lower = clean_text.lower().strip('.!?,; ')
-            
-            if not clean_text or clean_lower in hallucinations:
-                continue
-                
-            processed_segs.append({
-                'text': clean_text, 
-                'start': s.start, 
-                'end': s.end, 
-                'speaker': "Speaker"
-            })
+            if is_valid:
+                clean_text = re.sub(r'\[.*?\]|\(.*?\)|\♪', '', s.text).strip()
+                if clean_text:
+                    processed_segs.append({'text': clean_text, 'start': s.start, 'end': s.end, 'speaker': "Speaker"})
 
         #Analysis
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
