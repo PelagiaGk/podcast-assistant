@@ -100,35 +100,48 @@ def get_optimized_scores(windows, embedder, full_text):
     return [(sem * 0.7) + (den * 0.3) for sem, den in zip(semantic_scores, normalized_densities)]
 
 def build_windows(processed_segs, min_dur, ideal_max, hard_max):
+    """
+    True sliding window. Evaluates every single spoken segment 
+    as a potential starting hook for a viral clip.
+    """
     windows = []
     n = len(processed_segs)
-    i = 0
-    while i < n:
+    
+    for i in range(n): 
         anchor_start = processed_segs[i]['start']
         candidates = []
+        
         for j in range(i, n):
             current_dur = processed_segs[j]['end'] - anchor_start
-            if min_dur <= current_dur <= hard_max:
+            
+            if current_dur > hard_max:
+                break
+                
+            if current_dur >= min_dur:
                 candidates.append({
                     'index': j,
                     'duration': current_dur,
-                    'is_sent': _ends_on_sentence(processed_segs[j]['text']),
-                    'gap': processed_segs[j+1]['start'] - processed_segs[j]['end'] if j+1 < n else 999.0
+                    'is_sent': _ends_on_sentence(processed_segs[j]['text'])
                 })
         
-        if not candidates: break
-        
+        if not candidates:
+            continue
+            
         sentence_ends = [c for c in candidates if c['is_sent']]
-        best_cut = min(sentence_ends, key=lambda x: abs(x['duration'] - ideal_max)) if sentence_ends \
-                   else max(candidates, key=lambda x: x['gap'])
+        
+        if sentence_ends:
+            best_cut = min(sentence_ends, key=lambda x: abs(x['duration'] - ideal_max))
+        else:
+            best_cut = min(candidates, key=lambda x: abs(x['duration'] - ideal_max))
         
         idx = best_cut['index']
+        
         windows.append({
             'text': " ".join([f"[{processed_segs[k]['speaker']}] {processed_segs[k]['text']}" for k in range(i, idx+1)]),
             'start': anchor_start,
             'end': processed_segs[idx]['end'],
         })
-        i = idx + 1
+        
     return windows
 
 @torch.inference_mode()
@@ -164,10 +177,20 @@ def process_media(file_path, progress=gr.Progress()):
 
         processed_segs = []
         for s in segments_gen:
-            if s.no_speech_prob > 0.5:
+            if s.no_speech_prob > 0.45:
                 continue
                 
-            processed_segs.append({'text': s.text.strip(), 'start': s.start, 'end': s.end, 'speaker': "Speaker"})
+            clean_text = re.sub(r'\[.*?\]|\(.*?\)|\♪', '', s.text).strip()
+            
+            if not clean_text:
+                continue
+                
+            processed_segs.append({
+                'text': clean_text, 
+                'start': s.start, 
+                'end': s.end, 
+                'speaker': "Speaker"
+            })
 
         #Analysis
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
