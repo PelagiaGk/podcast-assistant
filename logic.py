@@ -149,13 +149,15 @@ def process_media(file_path, progress=gr.Progress()):
         base_model = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
         batched_model = BatchedInferencePipeline(base_model)
         
-        #Whisper auto-detects language 
         segments_gen, info = batched_model.transcribe(transcription_ready_audio, vad_filter=True, batch_size=16)
 
         processed_segs = []
         for s in segments_gen:
+            if s.no_speech_prob > 0.5:
+                continue
+                
             processed_segs.append({'text': s.text.strip(), 'start': s.start, 'end': s.end, 'speaker': "Speaker"})
-
+            
         #Analysis
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         windows = build_windows(processed_segs, getattr(Config, 'MIN_CLIP_DURATION', 30.0), getattr(Config, 'MAX_CLIP_DURATION', 60.0), 90.0)
