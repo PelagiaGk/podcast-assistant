@@ -1,20 +1,17 @@
 import os
-os.environ["HF_HOME"] = "/tmp/hf_cache"
-os.environ["TORCH_HOME"] = "/tmp/torch_cache"
-
-import torch
-import uuid
-import logging
 import gc
+import uuid
 import shutil
+import logging
 import tempfile
-import subprocess-
+import subprocess
 from pathlib import Path
+import numpy as np
+import torch
+import gradio as gr
 from faster_whisper import WhisperModel, BatchedInferencePipeline
 from sentence_transformers import SentenceTransformer, util
 from config import Config
-import gradio as gr
-import numpy as np
 
 try:
     from moviepy import VideoFileClip, AudioFileClip
@@ -31,7 +28,7 @@ SENTENCE_ENDINGS = ('.', '!', '?')
 
 
 def safe_slice(clip, start_time, end_time):
-    """Slices a MoviePy Video clip safely using explicit version compatibility checks."""
+    """Slices a MoviePy clip safely using explicit version compatibility checks."""
     if hasattr(clip, "subcut"):
         return clip.subcut(start_time, end_time)   #Modern MoviePy v2.x
     elif hasattr(clip, "subclip"):
@@ -41,6 +38,7 @@ def safe_slice(clip, start_time, end_time):
 
 
 def clear_memory():
+    """Aggressively flushes RAM and VRAM to prevent web server crashes on weak CPUs."""
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -100,10 +98,11 @@ def _ends_on_sentence(text: str) -> bool:
     """Return True if the text ends with any of SENTENCE_ENDINGS."""
     return text.strip().endswith(SENTENCE_ENDINGS)
 
+
 def build_windows(processed_segs, min_dur, max_dur):
     """
-    Candidate windows with strict maximum duration enforcement.
-    Clips will never exceed max_dur.
+    Candidate windows with strict promotional duration enforcement.
+    Clips won't exceed max_dur.
     """
     windows = []
     n = len(processed_segs)
@@ -143,7 +142,7 @@ def build_windows(processed_segs, min_dur, max_dur):
                 'start': anchor_start,
                 'end': end_seg['end'],
             })
-            i = best_end_idx + 1  
+            i = best_end_idx + 1
         else:
             i += 1
 
@@ -164,39 +163,40 @@ def process_media(file_path, progress=gr.Progress()):
     is_video = file_ext.endswith(('.mp4', '.mkv', '.mov', '.avi', '.webm'))
     is_compressed_audio = file_ext.endswith(('.m4a', '.aac', '.mp3', '.flac', '.ogg'))
 
-    processing_path = str(session_dir / "standardized_input.wav")
+    #Downstream AI transcription downsampling
+    transcription_ready_audio = str(session_dir / "transcribe_low_res.wav")
     master_clip = None
 
     try:
         if is_video:
-            progress(0.05, desc="Extracting audio from video...")
+            progress(0.05, desc="Extracting audio for AI pipeline...")
             master_clip = VideoFileClip(file_path)
             master_clip.audio.write_audiofile(
-                processing_path, fps=16000, nbytes=2, codec="pcm_s16le",
+                transcription_ready_audio, fps=16000, nbytes=2, codec="pcm_s16le",
                 ffmpeg_params=["-ac", "1"], logger=None
             )
             master_clip.close()
             clear_memory()
 
         elif is_compressed_audio:
-            progress(0.05, desc="Normalizing compressed audio container...")
+            progress(0.05, desc="Normalizing audio container for AI pipeline...")
             master_clip = AudioFileClip(file_path)
             master_clip.write_audiofile(
-                processing_path, fps=16000, nbytes=2, codec="pcm_s16le",
+                transcription_ready_audio, fps=16000, nbytes=2, codec="pcm_s16le",
                 ffmpeg_params=["-ac", "1"], logger=None
             )
             master_clip.close()
             clear_memory()
 
         else:
-            processing_path = file_path
+            transcription_ready_audio = file_path
 
-        #Batched Whisper Pipeline
+        #Transcription
         progress(0.2, desc="Starting Transcription...")
         base_model = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
         batched_model = BatchedInferencePipeline(base_model)
         segments_gen, info = batched_model.transcribe(
-            processing_path, vad_filter=True, batch_size=16
+            transcription_ready_audio, vad_filter=True, batch_size=16
         )
 
         processed_segs = []
@@ -222,13 +222,13 @@ def process_media(file_path, progress=gr.Progress()):
         if not processed_segs:
             return "Error\nNo dialogue transcribed from the media source.", None, None, None, str(session_dir), str(session_dir)
 
-        #Semantic Window
-        progress(0.75, desc="Analyzing content for viral clips...")
+        #Semantic Analysis 
+        progress(0.75, desc="Analyzing content for promotional clips...")
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
 
-        min_dur        = getattr(Config, 'MIN_CLIP_DURATION',  15.0)
-        max_dur        = getattr(Config, 'MAX_CLIP_DURATION',  60.0)
-        max_overlap_pct = getattr(Config, 'MAX_OVERLAP_PCT',   0.40)
+        min_dur = getattr(Config, 'MIN_CLIP_DURATION', 15.0)
+        max_dur = getattr(Config, 'MAX_CLIP_DURATION', 60.0)
+        max_overlap_pct = getattr(Config, 'MAX_OVERLAP_PCT', 0.40)
 
         windows = build_windows(processed_segs, min_dur, max_dur)
 
@@ -250,7 +250,6 @@ def process_media(file_path, progress=gr.Progress()):
             reverse=True,
         )
 
-        #Clip selection
         selected = []
         if ranked:
             for cand in ranked:
@@ -266,7 +265,7 @@ def process_media(file_path, progress=gr.Progress()):
 
                     if overlap_time > 0:
                         cand_overlap_ratio = overlap_time / cand_dur
-                        sel_overlap_ratio  = overlap_time / sel_dur
+                        sel_overlap_ratio = overlap_time / sel_dur
                         if cand_overlap_ratio > max_overlap_pct or sel_overlap_ratio > max_overlap_pct:
                             time_overlap = True
                             break
@@ -286,7 +285,7 @@ def process_media(file_path, progress=gr.Progress()):
         del embedder
         clear_memory()
 
-        #Export Loop
+        #Export Loops 
         progress(0.9, desc="Cutting and exporting viral clips...")
         clips = []
 
@@ -311,14 +310,24 @@ def process_media(file_path, progress=gr.Progress()):
                 cmd = [
                     "ffmpeg", "-y",
                     "-ss", str(hook['start']),
-                    "-t",  str(duration),
-                    "-i",  str(file_path), 
+                    "-t", str(duration),
+                    "-i", str(file_path),  
                     "-acodec", "libmp3lame",
-                    "-b:a", "320k",      
+                    "-b:a", "320k",        
                     str(path),
                 ]
                 subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
                 clips.append(str(path))
+
+        clip1 = clips[0] if len(clips) > 0 else None
+        clip2 = clips[1] if len(clips) > 1 else None
+        clip3 = clips[2] if len(clips) > 2 else None
+
+        status_summary = (
+            f"Processing Complete!\n"
+            f"Successfully extracted {len(clips)} highly relevant viral clip(s)."
+        )
+        return status_summary, clip1, clip2, clip3, str(session_dir), str(session_dir)
 
     except Exception as e:
         if master_clip:
