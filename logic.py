@@ -46,6 +46,14 @@ def clear_memory():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
+def cleanup_session(session_path=None):
+    if session_path and os.path.exists(session_path):
+        try:
+            shutil.rmtree(session_path)
+        except Exception as e:
+            logger.error(f"Error deleting session: {e}")
+    clear_memory()
+    
 def get_window_energy(wav_path, start_time, end_time):
     """Calculates RMS audio energy to identify enthusiastic peaks."""
     try:
