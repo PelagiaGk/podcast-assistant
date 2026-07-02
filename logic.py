@@ -5,6 +5,7 @@ import shutil
 import logging
 import tempfile
 import subprocess
+import wave
 from pathlib import Path
 import numpy as np
 import torch
@@ -12,7 +13,6 @@ import gradio as gr
 from faster_whisper import WhisperModel, BatchedInferencePipeline
 from sentence_transformers import SentenceTransformer, util
 from config import Config
-import wave
 
 try:
     from moviepy import VideoFileClip, AudioFileClip
@@ -26,184 +26,94 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 SENTENCE_ENDINGS = (
-    '.', '!', '?', ';',       
-    '。', '！', '？',         
-    '؟', '۔',                 
-    '।', '॥',                 
-    '։', '՜', '՞'             
+    '.', '!', '?', ';', #Latin/Cyrillic
+    '。', '！', '？', #Chinese/Japanese/Korean
+    '؟', '۔', #Arabic/Urdu
+    '।', '॥', #Indic
+    '։', '՜', '՞'  #Armenian
 )
 
-def _ends_on_sentence(text: str) -> bool:
-    """Return True if the text ends with any sentence ending."""
-    if not text:
-        return False
-    return text.strip().endswith(SENTENCE_ENDINGS)
-
 def safe_slice(clip, start_time, end_time):
-    """Slices a MoviePy clip safely using explicit version compatibility checks."""
     if hasattr(clip, "subcut"):
-        return clip.subcut(start_time, end_time)#Modern MoviePy v2.x
+        return clip.subcut(start_time, end_time)
     elif hasattr(clip, "subclip"):
-        return clip.subclip(start_time, end_time)#Legacy MoviePy v1.x
+        return clip.subclip(start_time, end_time)
     else:
         return clip
 
 def clear_memory():
-    """Aggressively flushes RAM and VRAM to prevent web server crashes on weak CPUs."""
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-
-def cleanup_session(session_path=None):
-    if session_path and os.path.exists(session_path):
-        try:
-            shutil.rmtree(session_path)
-        except Exception as e:
-            logger.error(f"Error deleting session: {e}")
-    clear_memory()
-
-
-def get_intersection_speaker(seg_start, seg_end, speaker_turns):
-    if not speaker_turns:
-        return "Speaker 1"
-    best_speaker = "Unknown"
-    max_overlap = 0
-    for turn in speaker_turns:
-        overlap = min(seg_end, turn['end']) - max(seg_start, turn['start'])
-        if overlap > max_overlap:
-            max_overlap = overlap
-            best_speaker = turn['speaker']
-    return best_speaker
-
-
-def get_optimized_scores(windows, embedder, full_text, wav_path):
-    if not windows:
-        return []
-
-    full_doc_embedding = embedder.encode(full_text, convert_to_tensor=True)
-    window_texts = [w['text'] for w in windows]
-    window_embeddings = embedder.encode(window_texts, convert_to_tensor=True)
-    
-    similarity_matrix = util.cos_sim(window_embeddings, full_doc_embedding)
-    semantic_scores = [sim[0].item() for sim in similarity_matrix]
-
-    energies = [get_window_energy(wav_path, w['start'], w['end']) for w in windows]
-    
-    max_energy = max(energies) if energies else 1.0
-    if max_energy == 0: 
-        max_energy = 1.0
-        
-    normalized_energies = [e / max_energy for e in energies]
-
-    final_scores = []
-    for sem, eng in zip(semantic_scores, normalized_energies):
-        final_score = (sem * 0.6) + (eng * 0.4)
-        final_scores.append(final_score)
-
-    return final_scores
-
-def build_windows(processed_segs, min_dur, ideal_max, hard_max):
-    """
-    Window generation, with semantic prioritization. 
-    Cuts on grammatical boundaries unless forced to use acoustic pauses.
-    """
-    windows = []
-    n = len(processed_segs)
-    i = 0
-
-    while i < n:
-        anchor_start = processed_segs[i]['start']
-        
-        candidates = []
-        
-        for j in range(i, n):
-            seg = processed_segs[j]
-            current_dur = seg['end'] - anchor_start
-            
-            if current_dur < min_dur:
-                continue
-                
-            if current_dur > hard_max:
-                break
-                
-            gap_to_next = processed_segs[j+1]['start'] - seg['end'] if j + 1 < n else 999.0 
-            
-            candidates.append({
-                'index': j,
-                'duration': current_dur,
-                'is_sentence_end': _ends_on_sentence(seg['text']),
-                'gap': gap_to_next
-            })
-
-        if not candidates:
-            break
-
-        sentence_ends = [c for c in candidates if c['is_sentence_end']]
-        
-        if sentence_ends:
-            best_cut = min(sentence_ends, key=lambda x: abs(x['duration'] - ideal_max))
-        else:
-            best_cut = max(candidates, key=lambda x: x['gap'])
-
-        best_cut_idx = best_cut['index']
-        end_seg = processed_segs[best_cut_idx]
-        
-        texts = [
-            f"[{processed_segs[k]['speaker']}] {processed_segs[k]['text']}"
-            for k in range(i, best_cut_idx + 1)
-        ]
-        
-        windows.append({
-            'text': " ".join(texts),
-            'start': anchor_start,
-            'end': end_seg['end'],
-        })
-        
-        i = best_cut_idx + 1 
-            
-    return windows
-
 def get_window_energy(wav_path, start_time, end_time):
-    """Calculates the acoustic energy of an audio segment."""
+    """Calculates RMS audio energy to identify enthusiastic peaks."""
     try:
         with wave.open(wav_path, 'rb') as wf:
             sr = wf.getframerate()
             start_frame = int(start_time * sr)
             end_frame = int(end_time * sr)
-            
             wf.setpos(start_frame)
             frames = wf.readframes(end_frame - start_frame)
-            
-            #Convert binary PCM data to a numpy array of 16-bit integers
             audio_data = np.frombuffer(frames, dtype=np.int16)
-            
-            if len(audio_data) == 0:
-                return 0.0
-                
-            #Calculate Root Mean Square to measure audio energy
-            rms = np.sqrt(np.mean(audio_data.astype(np.float64)**2))
-            return rms
-    except Exception as e:
-        logger.warning(f"Failed to calculate audio energy: {e}")
+            return np.sqrt(np.mean(audio_data.astype(np.float64)**2)) if len(audio_data) > 0 else 0.0
+    except Exception:
         return 0.0
+
+def _ends_on_sentence(text: str) -> bool:
+    if not text: return False
+    return text.strip().endswith(SENTENCE_ENDINGS)
+
+def build_windows(processed_segs, min_dur, ideal_max, hard_max):
+    windows = []
+    n = len(processed_segs)
+    i = 0
+    while i < n:
+        anchor_start = processed_segs[i]['start']
+        candidates = []
+        for j in range(i, n):
+            current_dur = processed_segs[j]['end'] - anchor_start
+            if min_dur <= current_dur <= hard_max:
+                candidates.append({
+                    'index': j,
+                    'duration': current_dur,
+                    'is_sent': _ends_on_sentence(processed_segs[j]['text']),
+                    'gap': processed_segs[j+1]['start'] - processed_segs[j]['end'] if j+1 < n else 999.0
+                })
+        
+        if not candidates: break
+        
+        sentence_ends = [c for c in candidates if c['is_sent']]
+        best_cut = min(sentence_ends, key=lambda x: abs(x['duration'] - ideal_max)) if sentence_ends \
+                   else max(candidates, key=lambda x: x['gap'])
+        
+        idx = best_cut['index']
+        windows.append({
+            'text': " ".join([f"[{processed_segs[k]['speaker']}] {processed_segs[k]['text']}" for k in range(i, idx+1)]),
+            'start': anchor_start,
+            'end': processed_segs[idx]['end'],
+        })
+        i = idx + 1
+    return windows
+
+def get_optimized_scores(windows, embedder, full_text, wav_path):
+    if not windows: return []
+    full_doc_embedding = embedder.encode(full_text, convert_to_tensor=True)
+    window_texts = [w['text'] for w in windows]
+    window_embeddings = embedder.encode(window_texts, convert_to_tensor=True)
+    
+    semantic_scores = [util.cos_sim(w_emb, full_doc_embedding).item() for w_emb in window_embeddings]
+    energies = [get_window_energy(wav_path, w['start'], w['end']) for w in windows]
+    max_energy = max(energies) if energies else 1.0
+    normalized_energies = [e / max_energy for e in energies]
+
+    return [(sem * 0.6) + (eng * 0.4) for sem, eng in zip(semantic_scores, normalized_energies)]
 
 @torch.inference_mode()
 def process_media(file_path, progress=gr.Progress()):
-    if not file_path or not os.path.exists(file_path):
-        logger.error(f"Provided file path invalid or non-existent: {file_path}")
-        return "Error\nFile selection missing or not found on the backend host.", None, None, None, "", ""
-
     session_id = str(uuid.uuid4())
     session_dir = Path(tempfile.gettempdir()) / f"session_{session_id}"
     session_dir.mkdir(parents=True, exist_ok=True)
-
-    file_ext = file_path.lower()
-    is_video = file_ext.endswith(('.mp4', '.mkv', '.mov', '.avi', '.webm'))
-    is_compressed_audio = file_ext.endswith(('.m4a', '.aac', '.mp3', '.flac', '.ogg'))
-
-    #Downstream AI transcription downsampling
-    transcription_ready_audio = str(session_dir / "transcribe_low_res.wav")
     master_clip = None
 
     try:
@@ -338,7 +248,7 @@ def process_media(file_path, progress=gr.Progress()):
             for i, hook in enumerate(selected):
                 path = session_dir / f"clip_{i+1}.mp4"
                 
-                padded_start = max(0.0, hook['start'] - 0.15)
+                padded_start = max(0.0, hook['start'] + 0.15)
                 padded_end = min(hook['end'] + 0.4, master_clip.duration or total_duration)
                 
                 sub_clip = safe_slice(master_clip, padded_start, padded_end)
@@ -387,7 +297,12 @@ def process_media(file_path, progress=gr.Progress()):
         return status_summary, clip1, clip2, clip3, str(session_dir), str(session_dir)
 
     except Exception as e:
-        logger.exception("Critical unexpected error caught during processing pipeline execution:")
-        error_md = f"Pipeline Execution Failed\n**Reason:** {str(e)}"
-        return error_md, None, None, None, str(session_dir), str(session_dir)
+        logger.exception("Pipeline failed")
+        return f"Error: {str(e)}", None, None, None, None, None
         
+    finally:
+        if master_clip:
+            try: master_clip.close()
+            except: pass
+        clear_memory()
+    
