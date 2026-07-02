@@ -99,10 +99,11 @@ def _ends_on_sentence(text: str) -> bool:
     return text.strip().endswith(SENTENCE_ENDINGS)
 
 
-def build_windows(processed_segs, min_dur, max_dur):
+def build_windows(processed_segs, min_dur, ideal_max, hard_max):
     """
-    Complete the final sentence cleanly, allowing the clip 
-    to gently exceed max_dur if necessary to avoid an unnatural cut.
+    Natural punctuation conclusion within the ideal range.
+    If no punctuation is found (run-on speech), it forces a clean break at a natural 
+    audio pause before hitting the absolute 'hard_max'.
     """
     windows = []
     n = len(processed_segs)
@@ -110,43 +111,44 @@ def build_windows(processed_segs, min_dur, max_dur):
 
     while i < n:
         anchor_start = processed_segs[i]['start']
-        best_end_idx = None
+        best_cut_idx = None
+        forced_cut_idx = None
         
         for j in range(i, n):
             seg = processed_segs[j]
             current_dur = seg['end'] - anchor_start
             
-            if current_dur >= min_dur and _ends_on_sentence(seg['text']):
-                best_end_idx = j
-                if current_dur >= max_dur:
-                    break
+            is_sentence_end = _ends_on_sentence(seg['text'])
+            
+            if current_dur >= min_dur:
+                if is_sentence_end:
+                    best_cut_idx = j
+                forced_cut_idx = j 
 
-        if best_end_idx is None:
-            for j in range(i, n):
-                dur = processed_segs[j]['end'] - anchor_start
-                if dur <= max_dur:
-                    if dur >= min_dur:
-                        best_end_idx = j
-                else:
-                    break
+            if current_dur >= ideal_max and best_cut_idx is not None:
+                break
+                
+            if current_dur >= hard_max:
+                break
 
-        if best_end_idx is not None:
-            end_seg = processed_segs[best_end_idx]
+        final_cut_idx = best_cut_idx if best_cut_idx is not None else forced_cut_idx
+        
+        if final_cut_idx is not None:
+            end_seg = processed_segs[final_cut_idx]
             texts = [
                 f"[{processed_segs[k]['speaker']}] {processed_segs[k]['text']}"
-                for k in range(i, best_end_idx + 1)
+                for k in range(i, final_cut_idx + 1)
             ]
             windows.append({
                 'text': " ".join(texts),
                 'start': anchor_start,
                 'end': end_seg['end'],
             })
-            i = best_end_idx + 1 
+            i = final_cut_idx + 1  
         else:
             i += 1
-
+            
     return windows
-
 
 @torch.inference_mode()
 def process_media(file_path, progress=gr.Progress()):
@@ -226,10 +228,10 @@ def process_media(file_path, progress=gr.Progress()):
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
 
         min_dur = getattr(Config, 'MIN_CLIP_DURATION', 15.0)
-        max_dur = getattr(Config, 'MAX_CLIP_DURATION', 60.0)
-        max_overlap_pct = getattr(Config, 'MAX_OVERLAP_PCT', 0.40)
+        ideal_max = getattr(Config, 'MAX_CLIP_DURATION', 60.0)
+        hard_max = 120.0  
 
-        windows = build_windows(processed_segs, min_dur, max_dur)
+        windows = build_windows(processed_segs, min_dur, ideal_max, hard_max)
 
         if not windows:
             logger.warning("No windows generated — falling back to raw segment boundaries.")
