@@ -128,7 +128,7 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600))
     #Cleanup trigger
     done_btn.click(
         fn=cleanup_session,
-        inputs=session_path
+        inputs=session_state
     ).then(
         fn=reset_ui,
         outputs=[transcript, c1, c2, c3, media_in, session_state, spinner, clips_header]
