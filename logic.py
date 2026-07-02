@@ -306,14 +306,21 @@ def process_media(file_path, progress=gr.Progress()):
         else:
             for i, hook in enumerate(selected):
                 path = session_dir / f"clip_{i+1}.mp3"
-                duration = hook['end'] - hook['start']
+                
+                raw_duration = hook['end'] - hook['start']
+                padded_end = min(hook['end'] + 0.4, total_duration)
+                export_duration = padded_end - hook['start']
+                
+                fade_start = max(0.0, export_duration - 0.4)
+
                 cmd = [
                     "ffmpeg", "-y",
                     "-ss", str(hook['start']),
-                    "-t", str(duration),
-                    "-i", str(file_path),  
+                    "-t",  str(export_duration),
+                    "-i",  str(file_path), 
+                    "-filter_complex", f"afade=t=out:st={fade_start}:d=0.4", 
                     "-acodec", "libmp3lame",
-                    "-b:a", "320k",        
+                    "-b:a", "320k",    
                     str(path),
                 ]
                 subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
