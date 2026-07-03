@@ -39,7 +39,7 @@ SENTENCE_ENDINGS = (
     '.', '!', '?', ';', #Latin/Cyrillic
     '。', '！', '？', #Chinese/Japanese/Korean
     '؟', '۔', #Arabic/Urdu
-    '।', '॥',  #Indic
+    '।', '॥', #Indic
     '։', '՜', '՞' #Armenian
 )
 
@@ -50,18 +50,20 @@ def load_vad_model():
         return
 
     from silero_vad import load_silero_vad, get_speech_timestamps, read_audio
-
     use_onnx = getattr(Config, 'VAD_USE_ONNX', False)
     _vad_model = load_silero_vad(onnx=use_onnx)
     _vad_utils = (get_speech_timestamps, None, read_audio, None, None)
 
 def get_whisper_pipeline():
     """Loads and caches the faster-whisper model. Loaded once per
-    process."""
+    process instead of once per request."""
     global _whisper_pipeline
     if _whisper_pipeline is None:
         base_model = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
-        _whisper_pipeline = BatchedInferencePipeline(base_model)
+        if getattr(Config, 'USE_BATCHED_INFERENCE', True):
+            _whisper_pipeline = BatchedInferencePipeline(base_model)
+        else:
+            _whisper_pipeline = base_model
     return _whisper_pipeline
 
 def get_embedder_model():
@@ -77,10 +79,10 @@ def warm_up_models():
         load_vad_model()
         get_whisper_pipeline()
         get_embedder_model()
-    logger.info("Models ready.")
+    logger.info("Models warmed up and ready.")
 
 def clear_memory():
-    """Flushes RAM and VRAM(of transient tensors)."""
+    """Flushes RAM and VRAM of transient tensors."""
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -111,7 +113,7 @@ def cleanup_stale_sessions(max_age_hours=1):
                     logger.error(f"Error deleting session {session_dir}: {e}")
 
 def safe_slice(clip, start_time, end_time):
-    """Slices a MoviePy clip safely using explicit version compatibility checks."""
+    """Slices a MoviePy clip using explicit version compatibility checks."""
     if hasattr(clip, "subcut"):
         return clip.subcut(start_time, end_time)
     elif hasattr(clip, "subclip"):
@@ -119,10 +121,48 @@ def safe_slice(clip, start_time, end_time):
     else:
         return clip
 
+def apply_audio_fade(clip, fade_in=0.15, fade_out=0.2):
+    """Applies a short audio fade in/out so exported clips don't start or end
+    on a jarring hard cut."""
+    try:
+        from moviepy import afx
+        return clip.with_effects([afx.AudioFadeIn(fade_in), afx.AudioFadeOut(fade_out)])
+    except ImportError:
+        try:
+            return clip.audio_fadein(fade_in).audio_fadeout(fade_out)
+        except AttributeError:
+            return clip
+
 def _ends_on_sentence(text: str) -> bool:
     """Checks if text ends on a sentence boundary, ignoring trailing whitespace or quotes."""
     cleaned = re.sub(r'[\'"\s]+$', '', text)
     return cleaned.endswith(SENTENCE_ENDINGS)
+
+def _speech_overlap_ratio(seg_start, seg_end, speech_intervals):
+    """Whisper segment's duration that Silero VAD independently
+    confirmed as speech."""
+    seg_dur = max(1e-6, seg_end - seg_start)
+    covered = 0.0
+    for interval in speech_intervals:
+        covered += max(0.0, min(seg_end, interval['end']) - max(seg_start, interval['start']))
+    return covered / seg_dur
+
+_REPEAT_RE = re.compile(r'\b(\w+(?:\s+\w+){0,2}?)\b(?:\s+\1\b){2,}', re.IGNORECASE)
+
+def _looks_repetitive(text: str) -> bool:
+    """Flags likely hallucinated/song-lyric text."""
+    return bool(_REPEAT_RE.search(text))
+
+def _starts_naturally(processed_segs, i, min_gap=0.5):
+    """A clip may only begin at segment i if it's a natural entry point:
+    the very first segment overall, right after a sentence boundary, or
+    preceded by a pause."""
+    if i == 0:
+        return True
+    prev = processed_segs[i - 1]
+    if _ends_on_sentence(prev['text']):
+        return True
+    return (processed_segs[i]['start'] - prev['end']) >= min_gap
 
 def _overlap_ratio(a, b):
     """Fraction of the shorter clip's duration that overlaps with the other clip.
@@ -138,7 +178,6 @@ def _overlap_ratio(a, b):
 def get_optimized_scores(windows, embedder, full_text):
     """
     Scores segments based on semantic relevance and speech density.
-    Ignores raw audio volume, preventing music from skewing results.
     """
     if not windows:
         return []
@@ -156,10 +195,12 @@ def get_optimized_scores(windows, embedder, full_text):
 
     return [(sem * 0.7) + (den * 0.3) for sem, den in zip(semantic_scores, normalized_densities)]
 
-def build_windows(processed_segs, min_dur, ideal_max, hard_max):
+def build_windows(processed_segs, min_dur, ideal_max, hard_max, min_gap=0.5, require_natural_start=True):
     windows = []
     n = len(processed_segs)
     for i in range(n):
+        if require_natural_start and not _starts_naturally(processed_segs, i, min_gap):
+            continue
         anchor_start = processed_segs[i]['start']
         candidates = []
         for j in range(i, n):
@@ -194,7 +235,9 @@ def get_speech_timestamps_from_file(wav_path):
     get_speech_timestamps, _, read_audio, _, _ = _vad_utils
     wav = read_audio(str(wav_path))
     return get_speech_timestamps(
-        wav, _vad_model, sampling_rate=16000, threshold=0.5, return_seconds=True
+        wav, _vad_model, sampling_rate=16000,
+        threshold=getattr(Config, 'VAD_THRESHOLD', 0.6),
+        return_seconds=True
     )
 
 @torch.inference_mode()
@@ -212,7 +255,6 @@ def process_media(file_path, progress=gr.Progress()):
 
     transcription_ready_audio = str(session_dir / "transcribe_low_res.wav")
     master_clip = None
-
     with _inference_lock:
         try:
             cmd = [
@@ -224,37 +266,43 @@ def process_media(file_path, progress=gr.Progress()):
 
             speech_intervals = get_speech_timestamps_from_file(transcription_ready_audio)
 
-            #Transcription
+            # Transcription
             batched_model = get_whisper_pipeline()
 
-            segments_gen, info = batched_model.transcribe(
-                transcription_ready_audio,
-                vad_filter=True,
-                batch_size=16,
-                condition_on_previous_text=False
-            )
+            transcribe_kwargs = dict(vad_filter=True, condition_on_previous_text=False)
+            if isinstance(batched_model, BatchedInferencePipeline):
+                transcribe_kwargs['batch_size'] = 16
+
+            segments_gen, info = batched_model.transcribe(transcription_ready_audio, **transcribe_kwargs)
+
+            min_speech_overlap = getattr(Config, 'MIN_SPEECH_OVERLAP', 0.6)
+            max_compression_ratio = getattr(Config, 'MAX_COMPRESSION_RATIO', 2.4)
 
             processed_segs = []
             for s in segments_gen:
-                is_valid_speech = any(
-                    s.start < interval['end'] and s.end > interval['start']
-                    for interval in speech_intervals
-                )
-                if not is_valid_speech or s.no_speech_prob > 0.35 or s.avg_logprob < -1.0:
+                speech_ratio = _speech_overlap_ratio(s.start, s.end, speech_intervals)
+                if speech_ratio < min_speech_overlap:
+                    continue
+                if s.no_speech_prob > 0.35 or s.avg_logprob < -1.0 or s.compression_ratio > max_compression_ratio:
                     continue
                 clean_text = re.sub(r'\[.*?\]|\(.*?\)|\♪', '', s.text).strip()
                 if not clean_text or clean_text.lower() in ["thank you", "bye", "subscribe"]:
+                    continue
+                if _looks_repetitive(clean_text):
                     continue
                 processed_segs.append({'text': clean_text, 'start': s.start, 'end': s.end, 'speaker': "Speaker"})
 
             #Analysis
             embedder = get_embedder_model()
-            windows = build_windows(
+            window_args = (
                 processed_segs,
                 getattr(Config, 'MIN_CLIP_DURATION', 30.0),
                 getattr(Config, 'MAX_CLIP_DURATION', 60.0),
                 getattr(Config, 'MAX_HARD_DURATION', 90.0),
             )
+            windows = build_windows(*window_args, min_gap=getattr(Config, 'MIN_NATURAL_GAP', 0.5))
+            if not windows:
+                windows = build_windows(*window_args, require_natural_start=False)
 
             full_transcript = " ".join([s['text'] for s in processed_segs])
             scores = get_optimized_scores(windows, embedder, full_transcript)
@@ -276,15 +324,17 @@ def process_media(file_path, progress=gr.Progress()):
 
             #Export
             clips = []
+            fade_in, fade_out = 0.15, 0.2
             if is_video:
                 master_clip = VideoFileClip(file_path)
                 for i, hook in enumerate(selected):
                     path = session_dir / f"clip_{i+1}.mp4"
                     sub_clip = safe_slice(
                         master_clip,
-                        max(0.0, hook['start'] - 0.15),
-                        min(hook['end'] + 0.1, master_clip.duration)
+                        max(0.0, hook['start'] - fade_in),
+                        min(hook['end'] + fade_out, master_clip.duration)
                     )
+                    sub_clip = apply_audio_fade(sub_clip, fade_in, fade_out)
                     sub_clip.write_videofile(
                         str(path), codec="libx264", audio_codec="aac",
                         audio_bitrate="320k", audio_fps=48000, preset="fast", logger=None
@@ -294,11 +344,11 @@ def process_media(file_path, progress=gr.Progress()):
             else:
                 for i, hook in enumerate(selected):
                     path = session_dir / f"clip_{i+1}.mp3"
-                    start, end = max(0.0, hook['start'] - 0.15), min(hook['end'] + 0.1, info.duration)
-                    fade_start = max(0.0, (end - start) - 0.1)
+                    start, end = max(0.0, hook['start'] - fade_in), min(hook['end'] + fade_out, info.duration)
+                    fade_start = max(0.0, (end - start) - fade_out)
                     cmd = [
                         "ffmpeg", "-y", "-ss", str(start), "-t", str(end - start), "-i", str(file_path),
-                        "-af", f"afade=t=in:st=0:d=0.15,afade=t=out:st={fade_start}:d=0.1",
+                        "-af", f"afade=t=in:st=0:d={fade_in},afade=t=out:st={fade_start}:d={fade_out}",
                         "-acodec", "libmp3lame", "-b:a", "320k", "-ar", "48000", str(path)
                     ]
                     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
