@@ -16,3 +16,4 @@ pydub
 python-magic
 onnxruntime
 soundfile
+silero-vad

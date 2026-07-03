@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from config import Config
 from logic import process_media, cleanup_session
+from logic import warm_up_models
 
 #Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -137,6 +138,7 @@ with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600))
     demo.unload(fn=cleanup_session)
 
 if __name__ == "__main__":
+    warm_up_models()
     try:
         Config.validate_env()
     except Exception as e:

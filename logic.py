@@ -6,6 +6,7 @@ import uuid
 import shutil
 import logging
 import tempfile
+import threading
 import subprocess
 import torch
 import gradio as gr
@@ -13,19 +14,23 @@ from pathlib import Path
 from faster_whisper import WhisperModel, BatchedInferencePipeline
 from sentence_transformers import SentenceTransformer, util
 from config import Config
-import soundfile as sf
 
 try:
-    from moviepy import VideoFileClip, AudioFileClip
+    from moviepy import VideoFileClip
 except ImportError:
     try:
-        from moviepy.editor import VideoFileClip, AudioFileClip
+        from moviepy.editor import VideoFileClip
     except ImportError:
         from moviepy.video.io.VideoFileClip import VideoFileClip
-        from moviepy.audio.io.AudioFileClip import AudioFileClip
 
 _vad_model = None
 _vad_utils = None
+
+_whisper_pipeline = None
+_embedder_model = None
+
+_inference_lock = threading.Lock()
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -38,27 +43,56 @@ SENTENCE_ENDINGS = (
     '։', '՜', '՞' #Armenian
 )
 
+def load_vad_model():
+    """Loads the Silero VAD model + its utility functions (get_speech_timestamps,
+    read_audio, etc.) via the `silero-vad` pip package. Avoids any
+    torch.hub/network dependency at runtime."""
+    global _vad_model, _vad_utils
+    if _vad_model is not None and _vad_utils is not None:
+        return
+
+    from silero_vad import load_silero_vad, get_speech_timestamps, read_audio
+
+    _vad_model = load_silero_vad()
+    _vad_utils = (get_speech_timestamps, None, read_audio, None, None)
+
+def get_whisper_pipeline():
+    """Loads and caches the faster-whisper model. Loaded once per
+    process."""
+    global _whisper_pipeline
+    if _whisper_pipeline is None:
+        base_model = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
+        _whisper_pipeline = BatchedInferencePipeline(base_model)
+    return _whisper_pipeline
+
+def get_embedder_model():
+    """Loads and caches the sentence embedder."""
+    global _embedder_model
+    if _embedder_model is None:
+        _embedder_model = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
+    return _embedder_model
+
 def clear_memory():
-    """Aggressively flushes RAM and VRAM."""
+    """Flushes RAM and VRAM(of transient tensors)."""
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
 def cleanup_session(session_path):
-    """Safely removes session folder and cleans memory."""
+    """Removes session folder and cleans memory."""
     if session_path and os.path.exists(session_path):
         try:
             shutil.rmtree(session_path)
         except Exception as e:
             logging.error(f"Cleanup failed: {e}")
-    gc.collect() 
+    gc.collect()
     return None, None, None, "", ""
 
 def cleanup_stale_sessions(max_age_hours=1):
     """Prevents storage exhaustion in public deployments by purging old sessions."""
     temp_dir = Path(tempfile.gettempdir())
     current_time = time.time()
-    
+
     for session_dir in temp_dir.glob("session_*"):
         if session_dir.is_dir():
             dir_age = current_time - session_dir.stat().st_mtime
@@ -79,25 +113,38 @@ def safe_slice(clip, start_time, end_time):
         return clip
 
 def _ends_on_sentence(text: str) -> bool:
-    """Checks if text ends on a boundary, ignoring trailing whitespace or quotes."""
+    """Checks if text ends on a sentence boundary, ignoring trailing whitespace or quotes."""
     cleaned = re.sub(r'[\'"\s]+$', '', text)
     return cleaned.endswith(SENTENCE_ENDINGS)
+
+def _overlap_ratio(a, b):
+    """Fraction of the shorter clip's duration that overlaps with the other clip.
+    0.0 = no overlap, 1.0 = one fully contains the other."""
+    intersection = min(a['end'], b['end']) - max(a['start'], b['start'])
+    if intersection <= 0:
+        return 0.0
+    shorter = min(a['end'] - a['start'], b['end'] - b['start'])
+    if shorter <= 0:
+        return 1.0
+    return intersection / shorter
 
 def get_optimized_scores(windows, embedder, full_text):
     """
     Scores segments based on semantic relevance and speech density.
     This ignores raw audio volume, preventing music from skewing results.
     """
-    if not windows: return []
-    
+    if not windows:
+        return []
+
     full_doc_embedding = embedder.encode(full_text, convert_to_tensor=True)
     window_texts = [w['text'] for w in windows]
     window_embeddings = embedder.encode(window_texts, convert_to_tensor=True)
-    
+
     semantic_scores = [util.cos_sim(w_emb, full_doc_embedding).item() for w_emb in window_embeddings]
-    
+
     densities = [len(w['text']) / max(1.0, w['end'] - w['start']) for w in windows]
     max_density = max(densities) if densities else 1.0
+    max_density = max_density if max_density > 0 else 1.0
     normalized_densities = [d / max_density for d in densities]
 
     return [(sem * 0.7) + (den * 0.3) for sem, den in zip(semantic_scores, normalized_densities)]
@@ -110,130 +157,160 @@ def build_windows(processed_segs, min_dur, ideal_max, hard_max):
         candidates = []
         for j in range(i, n):
             current_dur = processed_segs[j]['end'] - anchor_start
-            if current_dur > hard_max: break
+            if current_dur > hard_max:
+                break
             if current_dur >= min_dur:
                 candidates.append({'index': j, 'duration': current_dur})
-        
-        if not candidates: continue
-        best_cut = min(candidates, key=lambda x: abs(x['duration'] - ideal_max))
+
+        if not candidates:
+            continue
+
+        sentence_candidates = [
+            c for c in candidates if _ends_on_sentence(processed_segs[c['index']]['text'])
+        ]
+        pool = sentence_candidates if sentence_candidates else candidates
+
+        best_cut = min(pool, key=lambda x: abs(x['duration'] - ideal_max))
         idx = best_cut['index']
         windows.append({
-            'text': " ".join([processed_segs[k]['text'] for k in range(i, idx+1)]),
+            'text': " ".join([processed_segs[k]['text'] for k in range(i, idx + 1)]),
             'start': anchor_start,
             'end': processed_segs[idx]['end'],
         })
     return windows
 
 def get_speech_timestamps_from_file(wav_path):
-    global _vad_model, _vad_utils
-    
+    load_vad_model()
     if _vad_model is None or _vad_utils is None:
-        _vad_model, _vad_utils = torch.hub.load(
-            repo_or_dir='snakers4/silero-vad', 
-            model='silero_vad', 
-            force_reload=False
-        )
-    (get_speech_timestamps, _, read_audio, _, _) = _vad_utils
+        raise RuntimeError("VAD model failed to load.")
+
+    get_speech_timestamps, _, read_audio, _, _ = _vad_utils
     wav = read_audio(str(wav_path))
-    return get_speech_timestamps(wav, _vad_model, sampling_rate=16000, threshold=0.5)
+
+    return get_speech_timestamps(
+        wav, _vad_model, sampling_rate=16000, threshold=0.5, return_seconds=True
+    )
 
 @torch.inference_mode()
 def process_media(file_path, progress=gr.Progress()):
     if not file_path or not os.path.exists(file_path):
         return "Error\nFile not found.", None, None, None, "", ""
 
-    master_clip = None
     is_video = file_path.lower().endswith(('.mp4', '.mkv', '.mov', '.avi', '.webm'))
-    
+
     cleanup_stale_sessions()
 
     session_id = str(uuid.uuid4())
     session_dir = Path(tempfile.gettempdir()) / f"session_{session_id}"
     session_dir.mkdir(parents=True, exist_ok=True)
-    
+
     transcription_ready_audio = str(session_dir / "transcribe_low_res.wav")
-    
-    try:
-        cmd = [
-            "ffmpeg", "-y", "-i", str(file_path), 
-            "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", 
-            transcription_ready_audio
-        ]
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-    except subprocess.CalledProcessError:
-        return "Error: Could not convert audio format.", None, None, None, "", ""
+    master_clip = None
 
-    speech_intervals = get_speech_timestamps_from_file(transcription_ready_audio)
+    with _inference_lock:
+        try:
+            cmd = [
+                "ffmpeg", "-y", "-i", str(file_path),
+                "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+                transcription_ready_audio
+            ]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
-    #Transcription
-    base_model = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
-    batched_model = BatchedInferencePipeline(base_model)
+            speech_intervals = get_speech_timestamps_from_file(transcription_ready_audio)
 
-    segments_gen, info = batched_model.transcribe(
-        transcription_ready_audio, 
-        vad_filter=True, 
-        batch_size=16,
-        condition_on_previous_text=False 
-    )
+            #Transcription
+            batched_model = get_whisper_pipeline()
 
-    processed_segs = []
-    for s in segments_gen:
-        is_valid_speech = any(s.start < interval['end'] and s.end > interval['start'] for interval in speech_intervals)
-        if not is_valid_speech or s.no_speech_prob > 0.35 or s.avg_logprob < -1.0:
-            continue
-        clean_text = re.sub(r'\[.*?\]|\(.*?\)|\♪', '', s.text).strip()
-        if not clean_text or clean_text.lower() in ["thank you", "bye", "subscribe"]:
-            continue
-        processed_segs.append({'text': clean_text, 'start': s.start, 'end': s.end, 'speaker': "Speaker"})
+            segments_gen, info = batched_model.transcribe(
+                transcription_ready_audio,
+                vad_filter=True,
+                batch_size=16,
+                condition_on_previous_text=False
+            )
 
-    #Analysis
-    embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
-    windows = build_windows(processed_segs, getattr(Config, 'MIN_CLIP_DURATION', 30.0), getattr(Config, 'MAX_CLIP_DURATION', 60.0), 90.0)
-    
-    full_transcript = " ".join([s['text'] for s in processed_segs])
-    scores = get_optimized_scores(windows, embedder, full_transcript)
-    for i, w in enumerate(windows): w['score'] = scores[i]
-
-    ranked = sorted([w for w in windows if w['score'] > 0.4], key=lambda x: x['score'], reverse=True)
-    selected, max_overlap_pct = [], 0.25
-    
-    for cand in ranked:
-        if len(selected) >= 3: break
-        overlap = any((min(cand['end'], sel['end']) - max(cand['start'], sel['start'])) > 0 for sel in selected)
-        if not overlap: selected.append(cand)
-
-    selected = sorted(selected, key=lambda x: x['start'])
-
-    #Export
-    clips = []
-    try:
-        if is_video:
-            master_clip = VideoFileClip(file_path)
-            for i, hook in enumerate(selected):
-                path = session_dir / f"clip_{i+1}.mp4"
-                sub_clip = safe_slice(master_clip, max(0.0, hook['start'] - 0.15), min(hook['end'] + 0.1, master_clip.duration))
-                sub_clip.write_videofile(
-                    str(path), codec="libx264", audio_codec="aac", audio_bitrate="320k", audio_fps=48000, preset="fast", logger=None
+            processed_segs = []
+            for s in segments_gen:
+                is_valid_speech = any(
+                    s.start < interval['end'] and s.end > interval['start']
+                    for interval in speech_intervals
                 )
-                sub_clip.close()
-                clips.append(str(path))
-            master_clip.close()
-        else:
-            for i, hook in enumerate(selected):
-                path = session_dir / f"clip_{i+1}.mp3"
-                start, end = max(0.0, hook['start'] - 0.15), min(hook['end'] + 0.1, info.duration)
-                fade_start = max(0.0, (end - start) - 0.1)
-                cmd = ["ffmpeg", "-y", "-ss", str(start), "-t", str(end-start), "-i", str(file_path), 
-                       "-filter_complex", f"afade=t=in:st=0:d=0.15,afade=t=out:st={fade_start}:d=0.1", 
-                       "-acodec", "libmp3lame", "-b:a", "320k", "-ar", "48000", str(path)]
-                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                clips.append(str(path))
-        return "Processing Complete!", *[clips[i] if i < len(clips) else None for i in range(3)], str(session_dir), str(session_dir)
+                if not is_valid_speech or s.no_speech_prob > 0.35 or s.avg_logprob < -1.0:
+                    continue
+                clean_text = re.sub(r'\[.*?\]|\(.*?\)|\♪', '', s.text).strip()
+                if not clean_text or clean_text.lower() in ["thank you", "bye", "subscribe"]:
+                    continue
+                processed_segs.append({'text': clean_text, 'start': s.start, 'end': s.end, 'speaker': "Speaker"})
 
-    except Exception as e:
-       logger.exception("Pipeline failed")
-       return f"Error: {str(e)}", None, None, None, str(session_dir), str(session_dir)
-    finally:
-       if master_clip is not None: 
-           master_clip.close()
-       clear_memory()
+            # Analysis
+            embedder = get_embedder_model()
+            windows = build_windows(
+                processed_segs,
+                getattr(Config, 'MIN_CLIP_DURATION', 30.0),
+                getattr(Config, 'MAX_CLIP_DURATION', 60.0),
+                getattr(Config, 'MAX_HARD_DURATION', 90.0),
+            )
+
+            full_transcript = " ".join([s['text'] for s in processed_segs])
+            scores = get_optimized_scores(windows, embedder, full_transcript)
+            for i, w in enumerate(windows):
+                w['score'] = scores[i]
+
+            ranked = sorted([w for w in windows if w['score'] > 0.4], key=lambda x: x['score'], reverse=True)
+            max_overlap_pct = getattr(Config, 'MAX_OVERLAP_PCT', 0.25)
+            selected = []
+
+            for cand in ranked:
+                if len(selected) >= 3:
+                    break
+                overlap = any(_overlap_ratio(cand, sel) > max_overlap_pct for sel in selected)
+                if not overlap:
+                    selected.append(cand)
+
+            selected = sorted(selected, key=lambda x: x['start'])
+
+            #Export
+            clips = []
+            if is_video:
+                master_clip = VideoFileClip(file_path)
+                for i, hook in enumerate(selected):
+                    path = session_dir / f"clip_{i+1}.mp4"
+                    sub_clip = safe_slice(
+                        master_clip,
+                        max(0.0, hook['start'] - 0.15),
+                        min(hook['end'] + 0.1, master_clip.duration)
+                    )
+                    sub_clip.write_videofile(
+                        str(path), codec="libx264", audio_codec="aac",
+                        audio_bitrate="320k", audio_fps=48000, preset="fast", logger=None
+                    )
+                    sub_clip.close()
+                    clips.append(str(path))
+            else:
+                for i, hook in enumerate(selected):
+                    path = session_dir / f"clip_{i+1}.mp3"
+                    start, end = max(0.0, hook['start'] - 0.15), min(hook['end'] + 0.1, info.duration)
+                    fade_start = max(0.0, (end - start) - 0.1)
+                    cmd = [
+                        "ffmpeg", "-y", "-ss", str(start), "-t", str(end - start), "-i", str(file_path),
+                        "-af", f"afade=t=in:st=0:d=0.15,afade=t=out:st={fade_start}:d=0.1",
+                        "-acodec", "libmp3lame", "-b:a", "320k", "-ar", "48000", str(path)
+                    ]
+                    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                    clips.append(str(path))
+
+            return (
+                "Processing Complete!",
+                *[clips[i] if i < len(clips) else None for i in range(3)],
+                str(session_dir), str(session_dir)
+            )
+
+        except subprocess.CalledProcessError:
+            logger.exception("ffmpeg command failed")
+            return "Error: Could not process the media file (ffmpeg failed).", None, None, None, str(session_dir), str(session_dir)
+        except Exception as e:
+            logger.exception("Pipeline failed")
+            return f"Error: {str(e)}", None, None, None, str(session_dir), str(session_dir)
+        finally:
+            if master_clip is not None:
+                master_clip.close()
+            clear_memory()
