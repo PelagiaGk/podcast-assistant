@@ -229,9 +229,6 @@ def process_media(file_path, progress=gr.Progress()):
                        "-acodec", "libmp3lame", "-b:a", "320k", "-ar", "48000", str(path)]
                 subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
                 clips.append(str(path))
-       except Exception as e:
-        return f"Export Error: {str(e)}", None, None, None, str(session_dir), str(session_dir)
-
         return "Processing Complete!", *[clips[i] if i < len(clips) else None for i in range(3)], str(session_dir), str(session_dir)      
 
     except Exception as e:
