@@ -52,8 +52,8 @@ def load_vad_model():
         return
 
     from silero_vad import load_silero_vad, get_speech_timestamps, read_audio
-
-    _vad_model = load_silero_vad()
+    use_onnx = getattr(Config, 'VAD_USE_ONNX', False)
+    _vad_model = load_silero_vad(onnx=use_onnx)
     _vad_utils = (get_speech_timestamps, None, read_audio, None, None)
 
 def get_whisper_pipeline():
