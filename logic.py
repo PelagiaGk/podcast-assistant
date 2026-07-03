@@ -34,15 +34,6 @@ SENTENCE_ENDINGS = (
     '։', '՜', '՞' #Armenian
 )
 
-def safe_slice(clip, start_time, end_time):
-    """Slices a MoviePy clip safely using explicit version compatibility checks."""
-    if hasattr(clip, "subcut"):
-        return clip.subcut(start_time, end_time)
-    elif hasattr(clip, "subclip"):
-        return clip.subclip(start_time, end_time)
-    else:
-        return clip
-
 def clear_memory():
     """Aggressively flushes RAM and VRAM."""
     gc.collect()
@@ -50,14 +41,13 @@ def clear_memory():
         torch.cuda.empty_cache()
 
 def cleanup_session(session_path):
-    """Deletes the specific session folder when the user clicks 'Done'."""
+    """Instantly deletes specific session folder."""
     if session_path and os.path.exists(session_path):
         try:
             shutil.rmtree(session_path)
-            logger.info(f"User explicitly deleted session: {session_path}")
         except Exception as e:
-            logger.error(f"Error deleting session {session_path}: {e}")
-    clear_memory()
+            logger.error(f"Error: {e}")
+    gc.collect()
     return None, None, None, "", ""
 
 def cleanup_stale_sessions(max_age_hours=1):
@@ -74,6 +64,15 @@ def cleanup_stale_sessions(max_age_hours=1):
                     logger.info(f"Purged stale session: {session_dir}")
                 except Exception as e:
                     logger.error(f"Error deleting session {session_dir}: {e}")
+
+def safe_slice(clip, start_time, end_time):
+    """Slices a MoviePy clip safely using explicit version compatibility checks."""
+    if hasattr(clip, "subcut"):
+        return clip.subcut(start_time, end_time)
+    elif hasattr(clip, "subclip"):
+        return clip.subclip(start_time, end_time)
+    else:
+        return clip
 
 def _ends_on_sentence(text: str) -> bool:
     """Checks if text ends on a boundary, ignoring trailing whitespace or quotes."""
@@ -144,13 +143,18 @@ def build_windows(processed_segs, min_dur, ideal_max, hard_max):
         
     return windows
 
-  def get_speech_timestamps_from_file(wav_path):
-        model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad', force_reload=False)
-        (get_speech_timestamps, _, read_audio, _, _) = utils
-    
-        wav = read_audio(wav_path)
-         speech_timestamps = get_speech_timestamps(wav, model, sampling_rate=16000, threshold=0.5)
-        return speech_timestamps
+_vad_model = None
+
+def get_speech_timestamps_from_file(wav_path):
+    """Utility function to filter music using Silero VAD."""
+    global _vad_model
+    if _vad_model is None:
+        _vad_model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad', 
+                                           model='silero_vad', 
+                                           force_reload=False)
+    (get_speech_timestamps, _, read_audio, _, _) = utils
+    wav = read_audio(wav_path)
+    return get_speech_timestamps(wav, _vad_model, sampling_rate=16000, threshold=0.5)
 
 @torch.inference_mode()
 def process_media(file_path, progress=gr.Progress()):
