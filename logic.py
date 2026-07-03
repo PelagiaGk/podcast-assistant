@@ -82,7 +82,8 @@ def warm_up_models():
     logger.info("Models warmed up and ready.")
 
 def clear_memory():
-    """Flushes RAM and VRAM of transient tensors."""
+    """Flushes RAM and VRAM (of transient tensors — the cached
+    models themselves are intentionally kept alive)."""
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -122,8 +123,8 @@ def safe_slice(clip, start_time, end_time):
         return clip
 
 def apply_audio_fade(clip, fade_in=0.15, fade_out=0.2):
-    """Applies a short audio fade in/out so exported clips don't start or end
-    on a jarring hard cut."""
+    """Short audio fade in/out so exported clips don't start or end
+    on a jarring hard cut. Handles both MoviePy v1 and v2 APIs."""
     try:
         from moviepy import afx
         return clip.with_effects([afx.AudioFadeIn(fade_in), afx.AudioFadeOut(fade_out)])
@@ -139,7 +140,7 @@ def _ends_on_sentence(text: str) -> bool:
     return cleaned.endswith(SENTENCE_ENDINGS)
 
 def _speech_overlap_ratio(seg_start, seg_end, speech_intervals):
-    """Whisper segment's duration that Silero VAD independently
+    """Fraction of a Whisper segment's duration that Silero VAD independently
     confirmed as speech."""
     seg_dur = max(1e-6, seg_end - seg_start)
     covered = 0.0
@@ -150,19 +151,31 @@ def _speech_overlap_ratio(seg_start, seg_end, speech_intervals):
 _REPEAT_RE = re.compile(r'\b(\w+(?:\s+\w+){0,2}?)\b(?:\s+\1\b){2,}', re.IGNORECASE)
 
 def _looks_repetitive(text: str) -> bool:
-    """Flags likely hallucinated/song-lyric text."""
+    """Flags likely hallucinated/song-lyric text: the same word or short
+    phrase repeated back-to-back three or more times."""
     return bool(_REPEAT_RE.search(text))
 
 def _starts_naturally(processed_segs, i, min_gap=0.5):
     """A clip may only begin at segment i if it's a natural entry point:
     the very first segment overall, right after a sentence boundary, or
-    preceded by a pause."""
+    preceded by a real pause(topic change /breath break)."""
     if i == 0:
         return True
     prev = processed_segs[i - 1]
     if _ends_on_sentence(prev['text']):
         return True
     return (processed_segs[i]['start'] - prev['end']) >= min_gap
+
+def _window_confidence(processed_segs, i, idx):
+    """Transcription-confidence for the segments spanning a window,
+    from signals Whisper: avg_logprob near 0 and a low
+    no_speech_prob."""
+    segs = processed_segs[i:idx + 1]
+    if not segs:
+        return 0.0
+    logprob_component = sum(max(0.0, min(1.0, s['avg_logprob'] + 1.0)) for s in segs) / len(segs)
+    no_speech_component = sum(1.0 - s['no_speech_prob'] for s in segs) / len(segs)
+    return (logprob_component + no_speech_component) / 2.0
 
 def _overlap_ratio(a, b):
     """Fraction of the shorter clip's duration that overlaps with the other clip.
@@ -177,7 +190,8 @@ def _overlap_ratio(a, b):
 
 def get_optimized_scores(windows, embedder, full_text):
     """
-    Scores segments based on semantic relevance and speech density.
+    Scores windows on three factors: semantic relevance to the full
+    transcript, speech density (ignoring raw audio volume), and transcription confidence.
     """
     if not windows:
         return []
@@ -193,7 +207,16 @@ def get_optimized_scores(windows, embedder, full_text):
     max_density = max_density if max_density > 0 else 1.0
     normalized_densities = [d / max_density for d in densities]
 
-    return [(sem * 0.7) + (den * 0.3) for sem, den in zip(semantic_scores, normalized_densities)]
+    confidences = [w.get('confidence', 1.0) for w in windows]
+
+    sem_w = getattr(Config, 'SCORE_SEMANTIC_WEIGHT', 0.5)
+    den_w = getattr(Config, 'SCORE_DENSITY_WEIGHT', 0.2)
+    conf_w = getattr(Config, 'SCORE_CONFIDENCE_WEIGHT', 0.3)
+
+    return [
+        (sem * sem_w) + (den * den_w) + (conf * conf_w)
+        for sem, den, conf in zip(semantic_scores, normalized_densities, confidences)
+    ]
 
 def build_windows(processed_segs, min_dur, ideal_max, hard_max, min_gap=0.5, require_natural_start=True):
     windows = []
@@ -224,6 +247,7 @@ def build_windows(processed_segs, min_dur, ideal_max, hard_max, min_gap=0.5, req
             'text': " ".join([processed_segs[k]['text'] for k in range(i, idx + 1)]),
             'start': anchor_start,
             'end': processed_segs[idx]['end'],
+            'confidence': _window_confidence(processed_segs, i, idx),
         })
     return windows
 
@@ -255,6 +279,7 @@ def process_media(file_path, progress=gr.Progress()):
 
     transcription_ready_audio = str(session_dir / "transcribe_low_res.wav")
     master_clip = None
+
     with _inference_lock:
         try:
             cmd = [
@@ -266,7 +291,7 @@ def process_media(file_path, progress=gr.Progress()):
 
             speech_intervals = get_speech_timestamps_from_file(transcription_ready_audio)
 
-            # Transcription
+            #Transcription
             batched_model = get_whisper_pipeline()
 
             transcribe_kwargs = dict(vad_filter=True, condition_on_previous_text=False)
@@ -290,7 +315,10 @@ def process_media(file_path, progress=gr.Progress()):
                     continue
                 if _looks_repetitive(clean_text):
                     continue
-                processed_segs.append({'text': clean_text, 'start': s.start, 'end': s.end, 'speaker': "Speaker"})
+                processed_segs.append({
+                    'text': clean_text, 'start': s.start, 'end': s.end, 'speaker': "Speaker",
+                    'avg_logprob': s.avg_logprob, 'no_speech_prob': s.no_speech_prob,
+                })
 
             #Analysis
             embedder = get_embedder_model()
@@ -309,7 +337,12 @@ def process_media(file_path, progress=gr.Progress()):
             for i, w in enumerate(windows):
                 w['score'] = scores[i]
 
-            ranked = sorted([w for w in windows if w['score'] > 0.4], key=lambda x: x['score'], reverse=True)
+            min_score = getattr(Config, 'MIN_WINDOW_SCORE', 0.5)
+            min_confidence = getattr(Config, 'MIN_WINDOW_CONFIDENCE', 0.65)
+            ranked = sorted(
+                [w for w in windows if w['score'] > min_score and w['confidence'] >= min_confidence],
+                key=lambda x: x['score'], reverse=True
+            )
             max_overlap_pct = getattr(Config, 'MAX_OVERLAP_PCT', 0.25)
             selected = []
 
@@ -321,6 +354,13 @@ def process_media(file_path, progress=gr.Progress()):
                     selected.append(cand)
 
             selected = sorted(selected, key=lambda x: x['start'])
+
+            if not selected:
+                return (
+                    "No segment in this file met the quality bar. Try a different "
+                    "file. ",
+                    None, None, None, str(session_dir), str(session_dir)
+                )
 
             #Export
             clips = []
@@ -362,7 +402,7 @@ def process_media(file_path, progress=gr.Progress()):
 
         except subprocess.CalledProcessError:
             logger.exception("ffmpeg command failed")
-            return "Error: Could not process the media file (ffmpeg failed).", None, None, None, str(session_dir), str(session_dir)
+            return "Error: Could not process the media file.", None, None, None, str(session_dir), str(session_dir)
         except Exception as e:
             logger.exception("Pipeline failed")
             return f"Error: {str(e)}", None, None, None, str(session_dir), str(session_dir)
