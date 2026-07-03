@@ -138,6 +138,9 @@ def process_media(file_path, progress=gr.Progress()):
     if not file_path or not os.path.exists(file_path):
         return "Error\nFile not found.", None, None, None, "", ""
 
+    master_clip = None
+    is_video = file_path.lower().endswith(('.mp4', '.mkv', '.mov', '.avi', '.webm'))
+    
     cleanup_stale_sessions()
 
     session_id = str(uuid.uuid4())
@@ -146,20 +149,15 @@ def process_media(file_path, progress=gr.Progress()):
     
     transcription_ready_audio = str(session_dir / "transcribe_low_res.wav")
     
-    is_video = file_path.lower().endswith(('.mp4', '.mkv', '.mov', '.avi', '.webm'))
     try:
-        if is_video:
-            master_clip = VideoFileClip(file_path)
-            master_clip.audio.write_audiofile(transcription_ready_audio, fps=16000, nbytes=2, codec="pcm_s16le", ffmpeg_params=["-ac", "1"], logger=None)
-            master_clip.close()
-            master_clip = None 
-        else:
-            transcription_ready_audio = file_path
-    except Exception as e:
-        return f"Extraction Error: {str(e)}", None, None, None, "", ""
-
-    if not os.path.exists(transcription_ready_audio):
-        return "Error: Audio file creation failed.", None, None, None, "", ""
+        cmd = [
+            "ffmpeg", "-y", "-i", str(file_path), 
+            "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", 
+            transcription_ready_audio
+        ]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    except subprocess.CalledProcessError:
+        return "Error: Could not convert audio format.", None, None, None, "", ""
 
     speech_intervals = get_speech_timestamps_from_file(transcription_ready_audio)
 
@@ -177,14 +175,11 @@ def process_media(file_path, progress=gr.Progress()):
     processed_segs = []
     for s in segments_gen:
         is_valid_speech = any(s.start < interval['end'] and s.end > interval['start'] for interval in speech_intervals)
-        
         if not is_valid_speech or s.no_speech_prob > 0.35 or s.avg_logprob < -1.0:
             continue
-            
         clean_text = re.sub(r'\[.*?\]|\(.*?\)|\♪', '', s.text).strip()
         if not clean_text or clean_text.lower() in ["thank you", "bye", "subscribe"]:
             continue
-            
         processed_segs.append({'text': clean_text, 'start': s.start, 'end': s.end, 'speaker': "Speaker"})
 
     #Analysis
@@ -229,11 +224,12 @@ def process_media(file_path, progress=gr.Progress()):
                        "-acodec", "libmp3lame", "-b:a", "320k", "-ar", "48000", str(path)]
                 subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
                 clips.append(str(path))
-        return "Processing Complete!", *[clips[i] if i < len(clips) else None for i in range(3)], str(session_dir), str(session_dir)      
+        return "Processing Complete!", *[clips[i] if i < len(clips) else None for i in range(3)], str(session_dir), str(session_dir)
 
     except Exception as e:
        logger.exception("Pipeline failed")
        return f"Error: {str(e)}", None, None, None, str(session_dir), str(session_dir)
     finally:
-       if master_clip: master_clip.close()
+       if master_clip is not None: 
+           master_clip.close()
        clear_memory()
