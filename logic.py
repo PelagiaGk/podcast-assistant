@@ -13,6 +13,7 @@ from pathlib import Path
 from faster_whisper import WhisperModel, BatchedInferencePipeline
 from sentence_transformers import SentenceTransformer, util
 from config import Config
+import soundfile as sf
 
 try:
     from moviepy import VideoFileClip, AudioFileClip
@@ -23,6 +24,8 @@ except ImportError:
         from moviepy.video.io.VideoFileClip import VideoFileClip
         from moviepy.audio.io.AudioFileClip import AudioFileClip
 
+_vad_model = None
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 #Multilingual punctuation support
@@ -41,12 +44,11 @@ def clear_memory():
         torch.cuda.empty_cache()
 
 def cleanup_session(session_path):
-    """Instantly deletes specific session folder."""
     if session_path and os.path.exists(session_path):
         try:
             shutil.rmtree(session_path)
         except Exception as e:
-            logger.error(f"Error: {e}")
+            logger.error(f"Cleanup error: {e}")
     gc.collect()
     return None, None, None, "", ""
 
@@ -99,61 +101,35 @@ def get_optimized_scores(windows, embedder, full_text):
     return [(sem * 0.7) + (den * 0.3) for sem, den in zip(semantic_scores, normalized_densities)]
 
 def build_windows(processed_segs, min_dur, ideal_max, hard_max):
-    """
-    True sliding window. Evaluates every single spoken segment 
-    as a potential starting hook for a viral clip.
-    """
     windows = []
     n = len(processed_segs)
-    
-    for i in range(n): 
+    for i in range(n):
         anchor_start = processed_segs[i]['start']
         candidates = []
-        
         for j in range(i, n):
             current_dur = processed_segs[j]['end'] - anchor_start
-            
-            if current_dur > hard_max:
-                break
-                
+            if current_dur > hard_max: break
             if current_dur >= min_dur:
-                candidates.append({
-                    'index': j,
-                    'duration': current_dur,
-                    'is_sent': _ends_on_sentence(processed_segs[j]['text'])
-                })
+                candidates.append({'index': j, 'duration': current_dur})
         
-        if not candidates:
-            continue
-            
-        sentence_ends = [c for c in candidates if c['is_sent']]
-        
-        if sentence_ends:
-            best_cut = min(sentence_ends, key=lambda x: abs(x['duration'] - ideal_max))
-        else:
-            best_cut = min(candidates, key=lambda x: abs(x['duration'] - ideal_max))
-        
+        if not candidates: continue
+        best_cut = min(candidates, key=lambda x: abs(x['duration'] - ideal_max))
         idx = best_cut['index']
-        
         windows.append({
-            'text': " ".join([f"[{processed_segs[k]['speaker']}] {processed_segs[k]['text']}" for k in range(i, idx+1)]),
+            'text': " ".join([processed_segs[k]['text'] for k in range(i, idx+1)]),
             'start': anchor_start,
             'end': processed_segs[idx]['end'],
         })
-        
     return windows
 
-_vad_model = None
-
 def get_speech_timestamps_from_file(wav_path):
-    """Utility function to filter music using Silero VAD."""
     global _vad_model
     if _vad_model is None:
         _vad_model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad', 
                                            model='silero_vad', 
                                            force_reload=False)
     (get_speech_timestamps, _, read_audio, _, _) = utils
-    wav = read_audio(wav_path)
+    wav = read_audio(str(wav_path))
     return get_speech_timestamps(wav, _vad_model, sampling_rate=16000, threshold=0.5)
 
 @torch.inference_mode()
@@ -185,24 +161,27 @@ def process_media(file_path, progress=gr.Progress()):
         #Transcription
         base_model = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
         batched_model = BatchedInferencePipeline(base_model)
-        
+
         segments_gen, info = batched_model.transcribe(
             transcription_ready_audio, 
             vad_filter=True, 
-            vad_parameters=dict(threshold=0.6), 
             batch_size=16,
             condition_on_previous_text=False 
         )
 
         processed_segs = []
         for s in segments_gen:
-            is_valid = any(s.start < interval['end'] and s.end > interval['start'] for interval in speech_intervals)
+            is_valid_speech = any(s.start < interval['end'] and s.end > interval['start'] for interval in speech_intervals)
+        
+            if not is_valid_speech or s.no_speech_prob > 0.35 or s.avg_logprob < -1.0:
+                continue
             
-            if is_valid:
-                clean_text = re.sub(r'\[.*?\]|\(.*?\)|\♪', '', s.text).strip()
-                if clean_text:
-                    processed_segs.append({'text': clean_text, 'start': s.start, 'end': s.end, 'speaker': "Speaker"})
-
+            clean_text = re.sub(r'\[.*?\]|\(.*?\)|\♪', '', s.text).strip()
+            if not clean_text or clean_text.lower() in ["thank you", "bye", "subscribe"]:
+                continue
+            
+            processed_segs.append({'text': clean_text, 'start': s.start, 'end': s.end, 'speaker': "Speaker"})    
+ 
         #Analysis
         embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
         windows = build_windows(processed_segs, getattr(Config, 'MIN_CLIP_DURATION', 30.0), getattr(Config, 'MAX_CLIP_DURATION', 60.0), 90.0)
