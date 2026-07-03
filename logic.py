@@ -44,12 +44,13 @@ def clear_memory():
         torch.cuda.empty_cache()
 
 def cleanup_session(session_path):
+    """Safely removes session folder and cleans memory."""
     if session_path and os.path.exists(session_path):
         try:
             shutil.rmtree(session_path)
         except Exception as e:
-            logger.error(f"Cleanup error: {e}")
-    gc.collect()
+            logging.error(f"Cleanup failed: {e}")
+    gc.collect() 
     return None, None, None, "", ""
 
 def cleanup_stale_sessions(max_age_hours=1):
@@ -144,12 +145,9 @@ def process_media(file_path, progress=gr.Progress()):
     session_dir.mkdir(parents=True, exist_ok=True)
     
     transcription_ready_audio = str(session_dir / "transcribe_low_res.wav")
-    speech_intervals = get_speech_timestamps_from_file(transcription_ready_audio)
-    master_clip = None
-
+    
+    is_video = file_path.lower().endswith(('.mp4', '.mkv', '.mov', '.avi', '.webm'))
     try:
-        #Extraction
-        is_video = file_path.lower().endswith(('.mp4', '.mkv', '.mov', '.avi', '.webm'))
         if is_video:
             master_clip = VideoFileClip(file_path)
             master_clip.audio.write_audiofile(transcription_ready_audio, fps=16000, nbytes=2, codec="pcm_s16le", ffmpeg_params=["-ac", "1"], logger=None)
@@ -157,81 +155,84 @@ def process_media(file_path, progress=gr.Progress()):
             master_clip = None 
         else:
             transcription_ready_audio = file_path
+    except Exception as e:
+        return f"Extraction Error: {str(e)}", None, None, None, "", ""
 
-        #Transcription
-        base_model = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
-        batched_model = BatchedInferencePipeline(base_model)
+    if not os.path.exists(transcription_ready_audio):
+        return "Error: Audio file creation failed.", None, None, None, "", ""
 
-        segments_gen, info = batched_model.transcribe(
-            transcription_ready_audio, 
-            vad_filter=True, 
-            batch_size=16,
-            condition_on_previous_text=False 
-        )
+    speech_intervals = get_speech_timestamps_from_file(transcription_ready_audio)
 
-        processed_segs = []
-        for s in segments_gen:
-            is_valid_speech = any(s.start < interval['end'] and s.end > interval['start'] for interval in speech_intervals)
+    #Transcription
+    base_model = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
+    batched_model = BatchedInferencePipeline(base_model)
+
+    segments_gen, info = batched_model.transcribe(
+        transcription_ready_audio, 
+        vad_filter=True, 
+        batch_size=16,
+        condition_on_previous_text=False 
+    )
+
+    processed_segs = []
+    for s in segments_gen:
+        is_valid_speech = any(s.start < interval['end'] and s.end > interval['start'] for interval in speech_intervals)
         
-            if not is_valid_speech or s.no_speech_prob > 0.35 or s.avg_logprob < -1.0:
-                continue
+        if not is_valid_speech or s.no_speech_prob > 0.35 or s.avg_logprob < -1.0:
+            continue
             
-            clean_text = re.sub(r'\[.*?\]|\(.*?\)|\♪', '', s.text).strip()
-            if not clean_text or clean_text.lower() in ["thank you", "bye", "subscribe"]:
-                continue
+        clean_text = re.sub(r'\[.*?\]|\(.*?\)|\♪', '', s.text).strip()
+        if not clean_text or clean_text.lower() in ["thank you", "bye", "subscribe"]:
+            continue
             
-            processed_segs.append({'text': clean_text, 'start': s.start, 'end': s.end, 'speaker': "Speaker"})    
- 
-        #Analysis
-        embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
-        windows = build_windows(processed_segs, getattr(Config, 'MIN_CLIP_DURATION', 30.0), getattr(Config, 'MAX_CLIP_DURATION', 60.0), 90.0)
-        
-        full_transcript = " ".join([s['text'] for s in processed_segs])
-        scores = get_optimized_scores(windows, embedder, full_transcript)
-        for i, w in enumerate(windows): w['score'] = scores[i]
+        processed_segs.append({'text': clean_text, 'start': s.start, 'end': s.end, 'speaker': "Speaker"})
 
-        ranked = sorted([w for w in windows if w['score'] > 0.4], key=lambda x: x['score'], reverse=True)
-        selected, max_overlap_pct = [], 0.25
-        
-        for cand in ranked:
-            if len(selected) >= 3: break
-            overlap = any((min(cand['end'], sel['end']) - max(cand['start'], sel['start'])) > 0 for sel in selected)
-            if not overlap: selected.append(cand)
+    #Analysis
+    embedder = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
+    windows = build_windows(processed_segs, getattr(Config, 'MIN_CLIP_DURATION', 30.0), getattr(Config, 'MAX_CLIP_DURATION', 60.0), 90.0)
+    
+    full_transcript = " ".join([s['text'] for s in processed_segs])
+    scores = get_optimized_scores(windows, embedder, full_transcript)
+    for i, w in enumerate(windows): w['score'] = scores[i]
 
-        selected = sorted(selected, key=lambda x: x['start'])
+    ranked = sorted([w for w in windows if w['score'] > 0.4], key=lambda x: x['score'], reverse=True)
+    selected, max_overlap_pct = [], 0.25
+    
+    for cand in ranked:
+        if len(selected) >= 3: break
+        overlap = any((min(cand['end'], sel['end']) - max(cand['start'], sel['start'])) > 0 for sel in selected)
+        if not overlap: selected.append(cand)
 
-        #Export
-        clips = []
+    selected = sorted(selected, key=lambda x: x['start'])
+
+    #Export
+    clips = []
+    try:
         if is_video:
             master_clip = VideoFileClip(file_path)
             for i, hook in enumerate(selected):
                 path = session_dir / f"clip_{i+1}.mp4"
                 sub_clip = safe_slice(master_clip, max(0.0, hook['start'] - 0.15), min(hook['end'] + 0.1, master_clip.duration))
-                
                 sub_clip.write_videofile(
-                    str(path), 
-                    codec="libx264", 
-                    audio_codec="aac", 
-                    audio_bitrate="320k", 
-                    audio_fps=48000, 
-                    preset="fast",
-                    logger=None
+                    str(path), codec="libx264", audio_codec="aac", audio_bitrate="320k", audio_fps=48000, preset="fast", logger=None
                 )
                 sub_clip.close()
                 clips.append(str(path))
+            master_clip.close()
         else:
             for i, hook in enumerate(selected):
                 path = session_dir / f"clip_{i+1}.mp3"
                 start, end = max(0.0, hook['start'] - 0.15), min(hook['end'] + 0.1, info.duration)
                 fade_start = max(0.0, (end - start) - 0.1)
-                
                 cmd = ["ffmpeg", "-y", "-ss", str(start), "-t", str(end-start), "-i", str(file_path), 
                        "-filter_complex", f"afade=t=in:st=0:d=0.15,afade=t=out:st={fade_start}:d=0.1", 
                        "-acodec", "libmp3lame", "-b:a", "320k", "-ar", "48000", str(path)]
                 subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
                 clips.append(str(path))
+    except Exception as e:
+        return f"Export Error: {str(e)}", None, None, None, str(session_dir), str(session_dir)
 
-        return "Processing Complete!", *[clips[i] if i < len(clips) else None for i in range(3)], str(session_dir), str(session_dir)
+    return "Processing Complete!", *[clips[i] if i < len(clips) else None for i in range(3)], str(session_dir), str(session_dir)      
 
     except Exception as e:
         logger.exception("Pipeline failed")
