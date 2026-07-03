@@ -125,11 +125,14 @@ def build_windows(processed_segs, min_dur, ideal_max, hard_max):
     return windows
 
 def get_speech_timestamps_from_file(wav_path):
-    global _vad_model, _vad_utils 
-    if _vad_model is None:
-        _vad_model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad', 
-                                           model='silero_vad', 
-                                           force_reload=False)
+    global _vad_model, _vad_utils
+    
+    if _vad_model is None or _vad_utils is None:
+        _vad_model, _vad_utils = torch.hub.load(
+            repo_or_dir='snakers4/silero-vad', 
+            model='silero_vad', 
+            force_reload=False
+        )
     (get_speech_timestamps, _, read_audio, _, _) = _vad_utils
     wav = read_audio(str(wav_path))
     return get_speech_timestamps(wav, _vad_model, sampling_rate=16000, threshold=0.5)
