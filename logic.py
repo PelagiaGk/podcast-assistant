@@ -39,19 +39,18 @@ SENTENCE_ENDINGS = (
     '.', '!', '?', ';', #Latin/Cyrillic
     '。', '！', '？', #Chinese/Japanese/Korean
     '؟', '۔', #Arabic/Urdu
-    '।', '॥', #Indic
+    '।', '॥',  #Indic
     '։', '՜', '՞' #Armenian
 )
 
 def load_vad_model():
-    """Loads the Silero VAD model + its utility functions (get_speech_timestamps,
-    read_audio, etc.) via the `silero-vad` pip package. Avoids any
-    torch.hub/network dependency at runtime."""
+    """Loads the Silero VAD model and its utility functions."""
     global _vad_model, _vad_utils
     if _vad_model is not None and _vad_utils is not None:
         return
 
     from silero_vad import load_silero_vad, get_speech_timestamps, read_audio
+
     use_onnx = getattr(Config, 'VAD_USE_ONNX', False)
     _vad_model = load_silero_vad(onnx=use_onnx)
     _vad_utils = (get_speech_timestamps, None, read_audio, None, None)
@@ -71,6 +70,14 @@ def get_embedder_model():
     if _embedder_model is None:
         _embedder_model = SentenceTransformer(Config.EMBEDDER_MODEL, device=Config.DEVICE)
     return _embedder_model
+
+def warm_up_models():
+    """Loads VAD, Whisper, and the embedder once, up front."""
+    with _inference_lock:
+        load_vad_model()
+        get_whisper_pipeline()
+        get_embedder_model()
+    logger.info("Models ready.")
 
 def clear_memory():
     """Flushes RAM and VRAM(of transient tensors)."""
@@ -131,7 +138,7 @@ def _overlap_ratio(a, b):
 def get_optimized_scores(windows, embedder, full_text):
     """
     Scores segments based on semantic relevance and speech density.
-    This ignores raw audio volume, preventing music from skewing results.
+    Ignores raw audio volume, preventing music from skewing results.
     """
     if not windows:
         return []
@@ -186,7 +193,6 @@ def get_speech_timestamps_from_file(wav_path):
 
     get_speech_timestamps, _, read_audio, _, _ = _vad_utils
     wav = read_audio(str(wav_path))
-
     return get_speech_timestamps(
         wav, _vad_model, sampling_rate=16000, threshold=0.5, return_seconds=True
     )
@@ -241,7 +247,7 @@ def process_media(file_path, progress=gr.Progress()):
                     continue
                 processed_segs.append({'text': clean_text, 'start': s.start, 'end': s.end, 'speaker': "Speaker"})
 
-            # Analysis
+            #Analysis
             embedder = get_embedder_model()
             windows = build_windows(
                 processed_segs,
