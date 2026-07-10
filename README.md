@@ -4,19 +4,17 @@ sdk: gradio
 sdk_version: 5.0.1
 python_version: "3.10"
 models:
-  - pyannote/segmentation-3.0
-  - pyannote/speaker-diarization-3.1
-  - distil-large-v3
-  - valhalla/distilbart-mnli-12-1
-  - all-MiniLM-L6-v2
+  - snakers4/silero-vad
+  - openai/whisper-base
+  - sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+  - pyannote/speaker-diarization-2.1
 app_file: app.py
 pinned: false
 ---
 
 # 🎙️ Podcast Assistant
 
-An automated AI-powered assistant for podcast creators to effortlessly identify, extract, and analyze promotion-worthy clips from their full-length episodes. It can currently handle both video & audio only files.
-
+An automated AI-powered assistant for podcast creators to effortlessly identify, extract, and analyze promotion-worthy clips from their full-length episodes. It can currently handle both video & audio-only files.
 This project is deployed and hosted live as a **Hugging Face Space**. It is structured to sync seamlessly from GitHub directly to Hugging Face via GitHub Actions.
 
 ---
@@ -28,19 +26,30 @@ The application is fully hosted and ready to use without any local setup:
 
 ---
 
-## 🛠️ System Architecture & Models
+## 🛠 Features
 
-The Podcast Assistant leverages specialized, state-of-the-art open-source machine learning models to process audio pipelines efficiently:
+Smart Clipping: Automatically cuts at natural sentence boundaries for a professional, finished feel.
+Semantic Prioritization: Uses AI to select clips that best represent the overall topic of your file.
+Quality Filtering: Automatically discards clips with low transcription confidence or excessive repetitive filler.
+Polished Transitions: Automatically applies short audio fade-ins and fade-outs to prevent jarring cuts.
 
-* **Audio Segmentation & Diarization:**
-    * `pyannote/segmentation-3.0`: Handles voice activity detection and structural audio segmentation.
-    * `pyannote/speaker-diarization-3.1`: Identifies "who spoke when," separating multiple hosts and guests within an episode.
-* **Automatic Speech Recognition (ASR):**
-    * `distil-large-v3`: A highly optimized, distilled version of OpenAI's Whisper model used for rapid and accurate speech-to-text transcription.
-* **Zero-Shot Classification:**
-    * `valhalla/distilbart-mnli-12-1`: Evaluates transcribed dialogue segments for specific promotional hooks, emotional spikes, or thematic highlights using Natural Language Inference (NLI).
-* **Text Embeddings:**
-    * `all-MiniLM-L6-v2`: Maps text segments into a vector space for semantic search and relevance ranking of extracted clips.
+---
+
+## 🏗 Pipeline Architecture
+
+This app runs a multi-stage inference pipeline:
+VAD: Silero VAD filters the audio to keep only meaningful speech.
+Transcription: faster-whisper performs high-speed, accurate transcription.
+Analysis: A SentenceTransformer model embeds the transcript to calculate thematic relevance.
+Scoring & Export: Candidates are scored and sliced using optimized ffmpeg and moviepy commands.
+
+---
+
+## 🔒 Privacy & Data Policy
+
+Temporary Storage: Your files are processed in a secure, temporary environment.
+Automated Cleanup: To ensure the space remains performant and to respect disk limitations, all session data (including uploaded files and generated clips) is automatically purged.
+Non-Persistent: No data is stored permanently. Once your session is cleared, all related files are permanently deleted from the host.
 
 ---
 
@@ -57,7 +66,7 @@ Since the application runs in a production cloud environment, environment discre
 ### Pull Requests
 If you want to contribute fixes, optimize the processing pipeline, or update the Gradio interface:
 1. Fork the repository.
-2. Create a feature branch (`git checkout -b feature/amazing-improvement`).
+2. Create a feature branch (`git checkout -b feature/improvement`).
 3. Commit your changes with descriptive messages.
 4. Push your branch and open a **Pull Request** against the main branch.
 
