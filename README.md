@@ -1,6 +1,6 @@
 ---
 title: Podcast Assistant
-sdk: gradio
+sdk: static
 sdk_version: 5.0.1
 python_version: "3.10"
 models:
