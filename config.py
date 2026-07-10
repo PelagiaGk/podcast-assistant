@@ -41,8 +41,6 @@ class Config:
     MIN_WINDOW_CONFIDENCE = 0.65
     MAX_OVERLAP_PCT = 0.25
 
-    ANCHOR_THEMES = list(WEIGHTS.keys())
-
     @classmethod
     def validate_env(cls):
         """Checks for required secrets before running."""
