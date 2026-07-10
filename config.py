@@ -9,7 +9,7 @@ logger = logging.getLogger("Podcast Assistant")
 
 class Config:
     HF_TOKEN = os.getenv("HF_TOKEN")
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"  
+    DEVICE = "cpu"  
     COMPUTE_TYPE = "int8" if DEVICE == "cpu" else "float16" #Saves 50% RAM on CPU 
     VAD_USE_ONNX = True
 
