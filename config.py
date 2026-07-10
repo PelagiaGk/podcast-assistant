@@ -9,8 +9,8 @@ logger = logging.getLogger("Podcast Assistant")
 
 class Config:
     HF_TOKEN = os.getenv("HF_TOKEN")
-    DEVICE = "cpu"  
-    COMPUTE_TYPE = "int8" #Saves 50% RAM on CPU
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"  
+    COMPUTE_TYPE = "int8" if DEVICE == "cpu" else "float16" #Saves 50% RAM on CPU 
     VAD_USE_ONNX = True
 
     #Model Selection
@@ -28,13 +28,19 @@ class Config:
     
     WHISPER_VAD_FILTER = True
 
-    WEIGHTS = {
-        "profound insight": 5.0,
-        "actionable advice": 4.5,
-        "emotional storytelling": 4.0,
-        "controversial opinion": 3.5,
-        "casual small talk": -5.0
-    }
+    USE_BATCHED_INFERENCE = True
+    VAD_THRESHOLD = 0.6
+    MIN_SPEECH_OVERLAP = 0.6
+    MAX_COMPRESSION_RATIO = 2.4
+
+    SCORE_SEMANTIC_WEIGHT = 0.5
+    SCORE_DENSITY_WEIGHT = 0.2
+    SCORE_CONFIDENCE_WEIGHT = 0.3
+
+    MIN_WINDOW_SCORE = 0.5
+    MIN_WINDOW_CONFIDENCE = 0.65
+    MAX_OVERLAP_PCT = 0.25
+
     ANCHOR_THEMES = list(WEIGHTS.keys())
 
     @classmethod
