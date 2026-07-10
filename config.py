@@ -14,28 +14,32 @@ class Config:
     VAD_USE_ONNX = True
 
     #Model Selection
-    WHISPER_MODEL = "base" 
-    EMBEDDER_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-    DIARIZATION_MODEL = "pyannote/speaker-diarization@2.1"
+    WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
+    EMBEDDER_MODEL = os.getenv("EMBEDDER_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+    DIARIZATION_MODEL = os.getenv("DIARIZATION_MODEL", "pyannote/speaker-diarization@2.1")
 
     MAX_FILE_SIZE_MB = 500
-    MAX_CLIP_DURATION = 120
-    MIN_WORDS_FOR_HOOK = 30 
-    SIMILARITY_THRESHOLD = 0.45 
-    
+
+    MIN_CLIP_DURATION = 30.0
+    MAX_CLIP_DURATION = 60.0
+    MAX_HARD_DURATION = 90.0
+
     VIDEO_EXTENSIONS = ('.mp4', '.mkv', '.mov', '.avi', '.webm')
     AUDIO_EXTENSIONS = ('.mp3', '.wav', '.m4a', '.flac')
     
     WHISPER_VAD_FILTER = True
 
     USE_BATCHED_INFERENCE = True
-    VAD_THRESHOLD = 0.6
-    MIN_SPEECH_OVERLAP = 0.6
+    VAD_THRESHOLD = float(os.getenv("VAD_THRESHOLD", "0.7"))
+    MIN_SPEECH_OVERLAP = float(os.getenv("MIN_SPEECH_OVERLAP", "0.75"))
+
     MAX_COMPRESSION_RATIO = 2.4
 
-    SCORE_SEMANTIC_WEIGHT = 0.5
-    SCORE_DENSITY_WEIGHT = 0.2
-    SCORE_CONFIDENCE_WEIGHT = 0.3
+    SCORE_SEMANTIC_WEIGHT = float(os.getenv("SCORE_SEMANTIC_WEIGHT", "0.5"))
+    SCORE_DENSITY_WEIGHT = float(os.getenv("SCORE_DENSITY_WEIGHT", "0.2"))
+    SCORE_CONFIDENCE_WEIGHT = float(os.getenv("SCORE_CONFIDENCE_WEIGHT", "0.3"))
+
+    MIN_NATURAL_GAP = 0.5
 
     MIN_WINDOW_SCORE = 0.5
     MIN_WINDOW_CONFIDENCE = 0.65

@@ -258,7 +258,7 @@ def get_speech_timestamps_from_file(wav_path):
     wav = read_audio(str(wav_path))
     return get_speech_timestamps(
         wav, _vad_model, sampling_rate=16000,
-        threshold=getattr(Config, 'VAD_THRESHOLD', 0.6),
+        threshold=getattr(Config, 'VAD_THRESHOLD', 0.7),
         return_seconds=True
     )
 
@@ -298,7 +298,7 @@ def process_media(file_path, progress=gr.Progress()):
 
             segments_gen, info = batched_model.transcribe(transcription_ready_audio, **transcribe_kwargs)
 
-            min_speech_overlap = getattr(Config, 'MIN_SPEECH_OVERLAP', 0.6)
+            min_speech_overlap = getattr(Config, 'MIN_SPEECH_OVERLAP', 0.75)
             max_compression_ratio = getattr(Config, 'MAX_COMPRESSION_RATIO', 2.4)
 
             processed_segs = []
@@ -408,3 +408,5 @@ def process_media(file_path, progress=gr.Progress()):
             if master_clip is not None:
                 master_clip.close()
             clear_memory()
+
+            
