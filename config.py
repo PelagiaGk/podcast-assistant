@@ -10,7 +10,7 @@ logger = logging.getLogger("Podcast Assistant")
 class Config:
     HF_TOKEN = os.getenv("HF_TOKEN")
     DEVICE = "cpu"  
-    COMPUTE_TYPE = "int8" if DEVICE == "cpu" else "float16" #Saves 50% RAM on CPU 
+    COMPUTE_TYPE = "int8" #Saves 50% RAM on CPU 
     VAD_USE_ONNX = True
 
     #Model Selection

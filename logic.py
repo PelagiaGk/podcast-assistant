@@ -14,7 +14,6 @@ from pathlib import Path
 from faster_whisper import WhisperModel, BatchedInferencePipeline
 from sentence_transformers import SentenceTransformer, util
 from config import Config
-import random
 
 try:
     from moviepy import VideoFileClip
@@ -75,12 +74,12 @@ def get_embedder_model():
     return _embedder_model
 
 def warm_up_models():
-    """Loads VAD, Whisper, and the embedder once, up front."""
+    """Loads VAD, Whisper and the embedder up front."""
     with _inference_lock:
         load_vad_model()
         get_whisper_pipeline()
         get_embedder_model()
-    logger.info("Models warmed up and ready.")
+    logger.info("Models ready.")
 
 def clear_memory():
     """Flushes RAM and VRAM (of transient tensors — the cached
@@ -100,21 +99,19 @@ def cleanup_session(session_path):
     return None, None, None, "", ""
 
 def cleanup_stale_sessions(max_age_hours=1):
-    """Background execution."""
-    try:
-        temp_dir = Path(tempfile.gettempdir())
-        current_time = time.time()
-        
-        for session_dir in temp_dir.glob("session_*"):
-            if session_dir.is_dir():
-                dir_age = current_time - session_dir.stat().st_mtime
-                if dir_age > (max_age_hours * 3600):
-                    try:
-                        shutil.rmtree(session_dir)
-                    except Exception as e:
-                        logging.debug(f"Could not delete {session_dir}: {e}")
-    except Exception as e:
-        logging.error(f"Cleanup thread error: {e}")
+    """Prevents storage exhaustion in public deployments by purging old sessions."""
+    temp_dir = Path(tempfile.gettempdir())
+    current_time = time.time()
+
+    for session_dir in temp_dir.glob("session_*"):
+        if session_dir.is_dir():
+            dir_age = current_time - session_dir.stat().st_mtime
+            if dir_age > (max_age_hours * 3600):
+                try:
+                    shutil.rmtree(session_dir)
+                    logger.info(f"Purged stale session: {session_dir}")
+                except Exception as e:
+                    logger.error(f"Error deleting session {session_dir}: {e}")
 
 def safe_slice(clip, start_time, end_time):
     """Slices a MoviePy clip using explicit version compatibility checks."""
@@ -155,13 +152,11 @@ _REPEAT_RE = re.compile(r'\b(\w+(?:\s+\w+){0,2}?)\b(?:\s+\1\b){2,}', re.IGNORECA
 
 def _looks_repetitive(text: str) -> bool:
     """Flags likely hallucinated/song-lyric text: the same word or short
-    phrase repeated back-to-back three or more times."""
+    phrase repeated back-to-back."""
     return bool(_REPEAT_RE.search(text))
 
 def _starts_naturally(processed_segs, i, min_gap=0.5):
-    """A clip may only begin at segment i if it's a natural entry point:
-    the very first segment overall, right after a sentence boundary, or
-    preceded by a real pause(topic change /breath break)."""
+    """A clip may only begin at segment i if it's a natural entry point."""
     if i == 0:
         return True
     prev = processed_segs[i - 1]
@@ -274,20 +269,14 @@ def process_media(file_path, progress=gr.Progress()):
 
     is_video = file_path.lower().endswith(('.mp4', '.mkv', '.mov', '.avi', '.webm'))
 
+    cleanup_stale_sessions()
+
     session_id = str(uuid.uuid4())
     session_dir = Path(tempfile.gettempdir()) / f"session_{session_id}"
     session_dir.mkdir(parents=True, exist_ok=True)
 
     transcription_ready_audio = str(session_dir / "transcribe_low_res.wav")
     master_clip = None
-
-    if random.random() < 0.1:
-        cleanup_thread = threading.Thread(
-            target=cleanup_stale_sessions, 
-            args=(1,),
-            daemon=True
-        )
-        cleanup_thread.start()
 
     with _inference_lock:
         try:
@@ -373,8 +362,7 @@ def process_media(file_path, progress=gr.Progress()):
 
             #Export
             clips = []
-            fade_in = getattr(Config, 'FADE_IN_DURATION', 0.15)
-            fade_out = getattr(Config, 'FADE_OUT_DURATION', 0.2)
+            fade_in, fade_out = 0.15, 0.2
             if is_video:
                 master_clip = VideoFileClip(file_path)
                 for i, hook in enumerate(selected):
