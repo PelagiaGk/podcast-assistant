@@ -153,4 +153,4 @@ if __name__ == "__main__":
         shutil.rmtree(old_session, ignore_errors=True)
         
     #Launch
-    demo.queue(max_size=3).launch(server_name="0.0.0.0", server_port=7860)
+    demo.queue(max_size=3).launch(server_name="0.0.0.0", server_port=7860, ssr_mode=False)
