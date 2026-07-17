@@ -8,6 +8,9 @@ on:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -37,14 +40,11 @@ jobs:
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            # Pull the new image
             docker pull ghcr.io/${{ env.REPO_LC }}:latest
             
-            # Stop and remove the old container if it exists
             docker stop pyannote-app || true
             docker rm pyannote-app || true
             
-            # Run the new container, passing in the server's local .env file
             docker run -d \
               --name pyannote-app \
               -p 7860:7860 \
