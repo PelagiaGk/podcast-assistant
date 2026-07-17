@@ -17,32 +17,36 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }} ##########GITHUB_TOKEN
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository }}:latest
+          # Using the format and lowercase functions to safely force the tag name to lowercase
+          tags: ghcr.io/${{ theme.string.to_lower(github.repository) }}:latest
 
       - name: Deploy to VPS via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.VPS_IP }}  #####VPS_IP
+          host: ${{ secrets.VPS_IP }}
           username: root
-          key: ${{ secrets.VPS_SSH_KEY }} ###########VPS_SSH_KEY
+          key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            #Pull new image
-            docker pull ghcr.io/${{ github.repository }}:latest
+            # Convert repo name to lowercase manually here for the server commands
+            REPO_NAME=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
             
-            #Stop and remove old container
+            # Pull the new image
+            docker pull ghcr.io/$REPO_NAME:latest
+            
+            # Stop and remove the old container if it exists
             docker stop pyannote-app || true
             docker rm pyannote-app || true
             
-            #Run new container
+            # Run the new container, passing in the server's local .env file
             docker run -d \
               --name pyannote-app \
-              -p 127.0.0.1:7860:7860 \
+              -p 7860:7860 \
               --env-file /root/.env \
-              ghcr.io/${{ github.repository }}:latest
+              ghcr.io/$REPO_NAME:latest
