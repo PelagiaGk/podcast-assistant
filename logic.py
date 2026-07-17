@@ -59,11 +59,11 @@ def get_whisper_pipeline():
     process instead of once per request."""
     global _whisper_pipeline
     if _whisper_pipeline is None:
-        base_model = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
+        medium_model = WhisperModel(Config.WHISPER_MODEL, device=Config.DEVICE, compute_type=Config.COMPUTE_TYPE)
         if getattr(Config, 'USE_BATCHED_INFERENCE', True):
-            _whisper_pipeline = BatchedInferencePipeline(base_model)
+            _whisper_pipeline = BatchedInferencePipeline(medium_model)
         else:
-            _whisper_pipeline = base_model
+            _whisper_pipeline = medium_model
     return _whisper_pipeline
 
 def get_embedder_model():

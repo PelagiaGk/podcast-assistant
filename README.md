@@ -1,34 +1,21 @@
----
-title: Podcast Assistant
-sdk: gradio
-sdk_version: 5.0.1
-python_version: "3.10"
-models:
-  - snakers4/silero-vad
-  - openai/whisper-base
-  - sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
-  - pyannote/speaker-diarization-2.1
-app_file: app.py
-pinned: false
----
-
 # 🎙️ Podcast Assistant
 
 An automated AI-powered assistant for podcast creators to effortlessly identify, extract, and analyze promotion-worthy clips from their full-length episodes. It can currently handle both video & audio-only files.
-This project is deployed and hosted live as a **Hugging Face Space**. It is structured to sync seamlessly from GitHub directly to Hugging Face via GitHub Actions.
 
 ---
 
-## 🚀 Live Application
+## Models
 
-The application is fully hosted and ready to use without any local setup:
-👉 **[Access the Podcast Assistant on Hugging Face Spaces](https://pelagia-gk-podcast-assistant.hf.space)** (https://pelagia-gk-podcast-assistant.hf.space)
+  - snakers4/silero-vad
+  - openai/whisper-medium
+  - sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+  - pyannote/speaker-diarization-2.1
 
 ---
 
 ## 🛠 Features
 
-Smart Clipping: Automatically cuts at natural sentence boundaries for a professional, finished feel.
+Smart Clipping: Cuts at natural sentence boundaries for a professional, finished feel.
 Semantic Prioritization: Uses AI to select clips that best represent the overall topic of your file.
 Quality Filtering: Automatically discards clips with low transcription confidence or excessive repetitive filler.
 Polished Transitions: Automatically applies short audio fade-ins and fade-outs to prevent jarring cuts.
@@ -53,9 +40,9 @@ Non-Persistent: No data is stored permanently. Once your session is cleared, all
 
 ---
 
-## 👥 Contributing & Reporting Issues
+## 👥 Reporting Issues
 
-This repository contains the public source code for the Podcast Assistant. While the project is intended exclusively for deployment on Hugging Face Spaces rather than local machine execution, **contributions, improvements, and bug reporting are highly encouraged!**
+This repository contains the public source code for the Podcast Assistant. While the project is intended exclusively for deployment rather than local machine execution, **contributions, improvements, and bug reporting are highly encouraged!**
 
 ### Found a Bug or Have a Feature Request?
 Since the application runs in a production cloud environment, environment discrepancies should be minimal. However, if you notice unexpected behavior, processing errors, or have UI enhancement ideas:
@@ -70,15 +57,33 @@ If you want to contribute fixes, optimize the processing pipeline, or update the
 3. Commit your changes with descriptive messages.
 4. Push your branch and open a **Pull Request** against the main branch.
 
-*Note: Merged changes will automatically sync and deploy to the live Hugging Face Space.*
+*Note: Merged changes will automatically sync and deploy.*
 
 ---
 
 ## 🔒 Security & Environment Variables
 
-If you are maintaining a fork or setting up your own sync mirror, ensure the following environment secrets are securely configured within your GitHub Actions and Hugging Face Space settings:
-* `HF_TOKEN`: Your Hugging Face User Access Token (with Write permissions) to allow GitHub Actions to push changes.
-* Any necessary API keys or user tokens required by the `pyannote` models (as they require accepting user terms on Hugging Face before first use).
+* If you are maintaining a fork or setting up your own sync mirror, ensure the following environment secrets are securely configured within your GitHub Actions and Hugging Face Space settings:
+  1. `HF_TOKEN`: Your Hugging Face User Access Token (with Write permissions) to allow GitHub Actions to push changes.
+  2. Any necessary API keys or user tokens required by the `pyannote` models (as they require accepting user terms on Hugging Face before first use). 
+  --> Visit the pyannote/speaker-diarization-2.1 model page and click "Agree and access repository", as well as the pyannote/segmentation model page.
+* Hardware Requirements: This project needs at least 2 vCPUs and 4GB of RAM to run effectively.
+* To run locally you need to run these in your terminal:
+   ### Option A) Docker (using the terminal of your choice)
+    1. To connect to your Docker, run on your terminal:
+       docker build or docker run
+    2. Build the local image:
+       docker build -t podcast-assistant-local .
+    3. Run the container, linking the local .env file:
+       docker run -p 7860:7860 --env-file .env podcast-assistant-local
+  ### Option B) Open the terminal of your choice (VS Code, Git bash, GitHub Codespaces etc)
+    1. Create a virtual environment:
+       python -m venv venv
+       source venv/bin/activate
+    2. Install the packages directly:
+       pip install -r requirements.txt
+    3. Run the app:
+       python app.py
 
 ---
 

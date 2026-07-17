@@ -14,8 +14,8 @@ class Config:
     VAD_USE_ONNX = True
 
     #Model Selection
-    WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
-    EMBEDDER_MODEL = os.getenv("EMBEDDER_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+    WHISPER_MODEL = os.getenv("WHISPER_MODEL", "medium")
+    EMBEDDER_MODEL = os.getenv("EMBEDDER_MODEL", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
     DIARIZATION_MODEL = os.getenv("DIARIZATION_MODEL", "pyannote/speaker-diarization@2.1")
 
     MAX_FILE_SIZE_MB = 500

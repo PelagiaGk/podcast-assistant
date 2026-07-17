@@ -6,6 +6,7 @@ from pathlib import Path
 from config import Config
 from logic import process_media, cleanup_session
 from logic import warm_up_models
+import logic
 
 #Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -152,4 +153,4 @@ if __name__ == "__main__":
         shutil.rmtree(old_session, ignore_errors=True)
         
     #Launch
-    demo.queue(max_size=3).launch(server_name="0.0.0.0")
+    demo.queue(max_size=3).launch(server_name="0.0.0.0", server_port=7860)
