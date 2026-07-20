@@ -15,6 +15,9 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Create Version Stamp
+        run: echo "${{ github.sha }}" > version.txt
+        
       - name: Set lowercase repository name
         run: |
           echo "REPO_LC=${GITHUB_REPOSITORY,,}" >> ${GITHUB_ENV}

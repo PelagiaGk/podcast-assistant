@@ -8,6 +8,13 @@ from logic import process_media, cleanup_session
 from logic import warm_up_models
 import logic
 
+if os.path.exists("version.txt"):
+    with open("version.txt", "r") as f:
+        version_id = f.read().strip()[:7] 
+else:
+    version_id = "Dev"
+print(f"BUILD VERSION: {version_id}")
+
 #Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
