@@ -37,20 +37,3 @@ jobs:
           tags: ghcr.io/${{ env.REPO_LC }}:latest
           provenance: false
 
-      - name: Deploy to VPS via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.VPS_IP }}
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            docker pull ghcr.io/${{ env.REPO_LC }}:latest
-            
-            docker stop pyannote-app || true
-            docker rm pyannote-app || true
-            
-            docker run -d \
-              --name pyannote-app \
-              -p 7860:7860 \
-              --env-file /root/.env \
-              ghcr.io/${{ env.REPO_LC }}:latest
