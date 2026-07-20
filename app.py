@@ -7,6 +7,7 @@ from config import Config
 from logic import process_media, cleanup_session
 from logic import warm_up_models
 import logic
+import os 
 
 if os.path.exists("version.txt"):
     with open("version.txt", "r") as f:
