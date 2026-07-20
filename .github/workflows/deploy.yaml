@@ -17,7 +17,7 @@ jobs:
 
       - name: Create Version Stamp
         run: echo "${{ github.sha }}" > version.txt
-        
+
       - name: Set lowercase repository name
         run: |
           echo "REPO_LC=${GITHUB_REPOSITORY,,}" >> ${GITHUB_ENV}
@@ -35,6 +35,7 @@ jobs:
           context: .
           push: true
           tags: ghcr.io/${{ env.REPO_LC }}:latest
+          provenance: false
 
       - name: Deploy to VPS via SSH
         uses: appleboy/ssh-action@v1.0.3
