@@ -1,6 +1,7 @@
-# 🎙️ Podcast Assistant
+# 🎙️ Podcast Assistant - A free tool for content creators that supports multiple languages
 
-An automated AI-powered assistant for podcast creators to effortlessly identify, extract, and analyze promotion-worthy clips from their full-length episodes. It can currently handle both video & audio-only files.
+A free automated AI-powered assistant for podcast creators to effortlessly identify, extract, and analyze promotion-worthy clips from their full-length episodes. It can currently handle both video and audio-only files, and multiple languages.
+### Link: https://podcast-assistant.made-in.app/
 
 ---
 
@@ -15,28 +16,28 @@ An automated AI-powered assistant for podcast creators to effortlessly identify,
 
 ## 🛠 Features
 
-Smart Clipping: Cuts at natural sentence boundaries for a professional, finished feel.
-Semantic Prioritization: Uses AI to select clips that best represent the overall topic of your file.
-Quality Filtering: Automatically discards clips with low transcription confidence or excessive repetitive filler.
-Polished Transitions: Automatically applies short audio fade-ins and fade-outs to prevent jarring cuts.
+- Smart Clipping: Cuts at natural sentence boundaries for a professional, finished feel.
+- Semantic Prioritization: Uses AI to select clips that best represent the overall topic of your file.
+- Quality Filtering: Automatically discards clips with low transcription confidence or excessive repetitive filler.
+- Polished Transitions: Automatically applies short audio fade-ins and fade-outs to prevent jarring cuts.
 
 ---
 
 ## 🏗 Pipeline Architecture
 
 This app runs a multi-stage inference pipeline:
-VAD: Silero VAD filters the audio to keep only meaningful speech.
-Transcription: faster-whisper performs high-speed, accurate transcription.
-Analysis: A SentenceTransformer model embeds the transcript to calculate thematic relevance.
-Scoring & Export: Candidates are scored and sliced using optimized ffmpeg and moviepy commands.
+- VAD: Silero VAD filters the audio to keep only meaningful speech.
+- Transcription: faster-whisper performs high-speed, accurate transcription.
+- Analysis: A SentenceTransformer model embeds the transcript to calculate thematic relevance.
+- Scoring & Export: Candidates are scored and sliced using optimized ffmpeg and moviepy commands.
 
 ---
 
 ## 🔒 Privacy & Data Policy
 
-Temporary Storage: Your files are processed in a secure, temporary environment.
-Automated Cleanup: To ensure the space remains performant and to respect disk limitations, all session data (including uploaded files and generated clips) is automatically purged.
-Non-Persistent: No data is stored permanently. Once your session is cleared, all related files are permanently deleted from the host.
+- Temporary Storage: Your files are processed in a secure, temporary environment.
+- Automated Cleanup: To ensure the space remains performant and to respect disk limitations, all session data (including uploaded files and generated clips) is automatically purged.
+- Non-Persistent: No data is stored permanently. Once your session is cleared, all related files are permanently deleted from the host.
 
 ---
 
