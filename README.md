@@ -1,16 +1,17 @@
 # 🎙️ Podcast Assistant - A free tool for content creators that supports multiple languages
 
-A free automated AI-powered assistant for podcast creators to effortlessly identify, extract, and analyze promotion-worthy clips from their full-length episodes. It can currently handle both video and audio-only files, and multiple languages.
+A free automated AI-powered assistant for content creators to effortlessly identify, extract, and analyze promotion-worthy clips from their full-length episodes. It can currently handle both video and audio-only files in multiple languages.
 ### Link: https://podcast-assistant.made-in.app/
 
+*Note: Previously deployed on Hugging Face Spaces, the project has now moved to a separate VPS.*
 ---
 
 ## Models
 
-  - snakers4/silero-vad
-  - openai/whisper-medium
-  - sentence-transformers/paraphrase-multilingual-mpnet-base-v2
-  - pyannote/speaker-diarization-2.1
+- snakers4/silero-vad
+- openai/whisper-medium
+- sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+- pyannote/speaker-diarization-2.1
 
 ---
 
@@ -56,9 +57,8 @@ If you want to contribute fixes, optimize the processing pipeline, or update the
 1. Fork the repository.
 2. Create a feature branch (`git checkout -b feature/improvement`).
 3. Commit your changes with descriptive messages.
-4. Push your branch and open a **Pull Request** against the main branch.
+4. Push your branch and open a **Pull Request** against the **main** branch.
 
-*Note: Merged changes will automatically sync and deploy.*
 
 ---
 
