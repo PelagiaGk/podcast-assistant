@@ -1,9 +1,12 @@
 # 🎙️ Podcast Assistant - A free tool for content creators that supports multiple languages
 
 A free automated AI-powered assistant for content creators to effortlessly identify, extract, and analyze promotion-worthy clips from their full-length episodes. It can currently handle both video and audio-only files in multiple languages.
-### Link: https://podcast-assistant.made-in.app/
 
-*Note: Previously deployed on Hugging Face Spaces, the project has now moved to a separate VPS.*
+<img width="1594" height="541" alt="image" src="https://github.com/user-attachments/assets/f193fa13-8815-4522-854f-233510d853ec" />
+
+## Link: https://podcast-assistant.made-in.app/
+
+##### *Note: Previously deployed on Hugging Face Spaces, the project has now moved to a separate VPS.*
 ---
 
 ## Models
