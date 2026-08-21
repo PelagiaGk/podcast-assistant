@@ -30,6 +30,8 @@ function() {
 """
 
 #HTML Loading Spinner and Animations
+emoji_icon = "data:image/svg+xml,<svg xmlns=%27http://w3.org viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🎙️</text></svg>"
+
 SPINNER_HTML = """
 <div style="display: flex; align-items: center; gap: 12px; margin: 15px 0; padding: 10px; background-color: rgba(138, 92, 246, 0.1); border-radius: 8px;">
     <div style="
@@ -88,7 +90,7 @@ def reset_ui():
     )
 
 #UI Interface
-with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600), title="Podcast Assistant", head="🎙️") as demo:
+with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600), title="Podcast Assistant") as demo:
     session_state = gr.State("")
     
     gr.Markdown("# Podcast Assistant - Viral Clips Extractor")
@@ -161,4 +163,4 @@ if __name__ == "__main__":
         shutil.rmtree(old_session, ignore_errors=True)
         
     #Launch
-    demo.queue(max_size=3).launch(server_name="0.0.0.0", server_port=7860, share=False)
+    demo.queue(max_size=3).launch(server_name="0.0.0.0", server_port=7860, favicon_path=emoji_icon, share=False)
