@@ -44,14 +44,19 @@ jobs:
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            docker pull ghcr.io/${{ env.REPO_LC }}:latest
+            mkdir -p ~/podcast-assistant
+            cd ~/podcast-assistant
             
-            docker stop pyannote-app || true
-            docker rm pyannote-app || true
+            cat << 'EOF' > docker-compose.yml
+            version: '3.8'
+            services:
+              podcast-assistant:
+                image: ghcr.io/${{ env.REPO_LC }}:latest
+                container_name: pyannote-app
+                restart: unless-stopped
+                ports:
+                  - "7860:7860"
+            EOF
             
-            docker run -d \
-              --name pyannote-app \
-              --restart unless-stopped \
-              -p 7860:7860 \
-              -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
-              ghcr.io/${{ env.REPO_LC }}:latest
+            docker compose pull
+            docker compose up -d
