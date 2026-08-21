@@ -30,7 +30,8 @@ function() {
 """
 
 #HTML Loading Spinner and Animations
-emoji_icon = "data:image/svg+xml,<svg xmlns=%27http://w3.org viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🎙️</text></svg>"
+emoji_icon = "data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🎙️</text></svg>"
+custom_head = f'<link rel="icon" href="{emoji_icon}">'
 
 SPINNER_HTML = """
 <div style="display: flex; align-items: center; gap: 12px; margin: 15px 0; padding: 10px; background-color: rgba(138, 92, 246, 0.1); border-radius: 8px;">
@@ -90,7 +91,7 @@ def reset_ui():
     )
 
 #UI Interface
-with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600), title="Podcast Assistant", favicon_path=emoji_icon,) as demo:
+with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600), title="Podcast Assistant", head=custom_head) as demo:
     session_state = gr.State("")
     
     gr.Markdown("# Podcast Assistant - Viral Clips Extractor")
