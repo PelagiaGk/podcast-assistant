@@ -90,7 +90,7 @@ def reset_ui():
     )
 
 #UI Interface
-with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600), title="Podcast Assistant") as demo:
+with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600), title="Podcast Assistant", favicon_path=emoji_icon,) as demo:
     session_state = gr.State("")
     
     gr.Markdown("# Podcast Assistant - Viral Clips Extractor")
@@ -163,4 +163,4 @@ if __name__ == "__main__":
         shutil.rmtree(old_session, ignore_errors=True)
         
     #Launch
-    demo.queue(max_size=3).launch(server_name="0.0.0.0", server_port=7860, favicon_path=emoji_icon, share=False)
+    demo.queue(max_size=3).launch(server_name="0.0.0.0", server_port=7860, share=False)
