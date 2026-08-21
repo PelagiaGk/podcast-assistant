@@ -46,11 +46,11 @@ jobs:
           script: |
             docker pull ghcr.io/${{ env.REPO_LC }}:latest
             
-            docker stop podcast-assistant || true
-            docker rm podcast-assistant || true
+            docker stop pyannote-app || true
+            docker rm pyannote-app || true
             
             docker run -d \
-              --name podcast-assistant \
+              --name pyannote-app \
               --restart unless-stopped \
               -p 7860:7860 \
               -e HF_TOKEN=${{ secrets.HF_TOKEN }} \

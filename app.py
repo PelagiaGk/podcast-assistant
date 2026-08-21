@@ -88,7 +88,7 @@ def reset_ui():
     )
 
 #UI Interface
-with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600), title="Podcast Assistant") as demo:
+with gr.Blocks(theme=gr.themes.Soft(), js=warning_js, delete_cache=(3600, 3600), title="Podcast Assistant", head="🎙️") as demo:
     session_state = gr.State("")
     
     gr.Markdown("# Podcast Assistant - Viral Clips Extractor")
